@@ -304,3 +304,6 @@ Apply/Undo трёх записей. Не выбранные Alien/Inception со
 SPK 0.3.0-1 собран воспроизводимо, SHA256
 `238f857150bd79e07178cd82c3e7671aea50ede5a088bcdb7dbe1f7b0951fe55`.
 На NAS пока не установлен; реальную медиатеку в этой проверке не изменяли.
+
+Linux CI [run38634609800](https://github.com/damuraiz/plex-helper/actions/runs/38634609800) — success.
+CI SPK побайтово совпадает с локальным пакетом, загруженным в мастер DSM.
