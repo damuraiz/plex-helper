@@ -48,12 +48,19 @@ func (e *Engine) beginProgress(j Journal, kind string) {
 	e.stopRequested = false
 	e.liveJournal = new(Journal)
 	*e.liveJournal = cloneJournal(j)
-	e.progress = Progress{Active: true, Kind: kind, JournalID: j.ID, FileCount: len(j.Entries), Phase: "Подготовка"}
+	e.progressEntries = make(map[int]int)
+	for index, entry := range j.Entries {
+		if kind != "undo" || needsUndo(entry) {
+			e.progressEntries[index] = len(e.progressEntries) + 1
+		}
+	}
+	e.progress = Progress{Active: true, Kind: kind, JournalID: j.ID, FileCount: len(e.progressEntries), Phase: "Подготовка"}
 }
 func (e *Engine) endProgress() {
 	e.progressMu.Lock()
 	defer e.progressMu.Unlock()
 	e.liveJournal = nil
+	e.progressEntries = nil
 	e.progress = Progress{}
 	e.stopRequested = false
 }
@@ -61,7 +68,7 @@ func (e *Engine) publish(j Journal, index int, phase string) {
 	e.progressMu.Lock()
 	defer e.progressMu.Unlock()
 	*e.liveJournal = cloneJournal(j)
-	e.progress.FileIndex = index + 1
+	e.progress.FileIndex = e.progressEntries[index]
 	e.progress.Phase = phase
 	e.progress.Bytes = 0
 	e.progress.Total = 0
@@ -69,7 +76,10 @@ func (e *Engine) publish(j Journal, index int, phase string) {
 		e.progress.Path = j.Entries[index].Source
 	}
 	e.progress.Completed = 0
-	for _, entry := range j.Entries {
+	for index, entry := range j.Entries {
+		if _, included := e.progressEntries[index]; !included {
+			continue
+		}
 		if e.progress.Kind == "apply" && entry.Status == "moved" || e.progress.Kind == "undo" && entry.Status == "restored" {
 			e.progress.Completed++
 		}

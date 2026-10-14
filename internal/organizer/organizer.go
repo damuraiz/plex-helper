@@ -78,12 +78,13 @@ type Journal struct {
 	Error     string         `json:"error,omitempty"`
 }
 type Engine struct {
-	dataDir       string
-	mu            sync.Mutex
-	progressMu    sync.Mutex
-	liveJournal   *Journal
-	progress      Progress
-	stopRequested bool
+	dataDir         string
+	mu              sync.Mutex
+	progressMu      sync.Mutex
+	liveJournal     *Journal
+	progress        Progress
+	progressEntries map[int]int
+	stopRequested   bool
 }
 
 func New(dataDir string) (*Engine, error) {

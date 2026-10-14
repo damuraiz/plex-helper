@@ -556,7 +556,7 @@ async function refreshJournals() {
       undo.type = 'button';
       undo.addEventListener('click', action(async () => {
         try {
-          message('Выполняется отмена. Для старого журнала может потребоваться проверка содержимого; прогресс показан выше.');
+          message('Выполняется отмена. Старый журнал требует проверки содержимого. Обычный возврат на том же томе выполняется после одного прохода; новые операции отменяются без чтения содержимого.');
           const pending = api('/api/undo', { journalId: journal.id });
           pollJournals();
           await pending;

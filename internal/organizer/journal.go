@@ -370,8 +370,12 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 	j.Status = "undoing"
 	e.beginProgress(j, "undo")
 	defer e.endProgress()
+	proofs := make(map[int]legacyUndoProof)
 	// Verify the entire recovery set before changing any media.
 	for index, entry := range j.Entries {
+		if !needsUndo(entry) {
+			continue
+		}
 		e.publish(j, index, "Проверка перед отменой")
 		if err = e.fileProgress(entry.Destination, 0, 0, "Проверка перед отменой"); err != nil {
 			return j, err
@@ -385,21 +389,10 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 		if entry.Digest == "" || entry.Status == "planned" || entry.Status == "restored" {
 			continue
 		}
-		found := false
-		for _, candidate := range []string{entry.Source, entry.Destination, entry.SourceStage, entry.UndoStage} {
-			present, err := exists(candidate)
-			if err != nil {
-				return j, err
-			}
-			if present {
-				found = true
-				if err = verifyDigest(candidate, entry.Digest, e.fileProgress); err != nil {
-					return j, err
-				}
-			}
-		}
-		if !found {
-			return j, fmt.Errorf("all recorded paths missing: %s", entry.Source)
+		if proof, ok, proofErr := verifyLegacyUndo(entry, e.fileProgress); proofErr != nil {
+			return j, proofErr
+		} else if ok {
+			proofs[index] = proof
 		}
 	}
 	if err = repairTail(path, end); err != nil {
@@ -429,6 +422,8 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 		entry.Status = "undo_pending"
 		if entry.Verification == "stat" {
 			_, err = fastMove(entry.Destination, entry.Source, *entry.DestinationIdentity)
+		} else if proof, ok := proofs[index]; ok {
+			err = proof.restore(*entry)
 		} else {
 			err = restoreOne(*entry, e.fileProgress)
 		}

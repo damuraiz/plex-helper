@@ -52,7 +52,7 @@ def png(size):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="0.2.1-1")
+    parser.add_argument("--version", default="0.2.2-1")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--go", default=os.environ.get("GO", "go"))
     parser.add_argument("--binary", type=Path, help="Use an already built static linux/amd64 binary (does not run Go).")
