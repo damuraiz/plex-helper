@@ -321,13 +321,26 @@ func (a *App) browse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirs := make([]map[string]string, 0)
+	videos := make([]map[string]any, 0)
+	includeFiles := r.URL.Query().Get("files") == "1"
+	truncated := false
 	for _, file := range files {
 		if file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
 			dirs = append(dirs, map[string]string{"name": file.Name(), "path": filepath.Join(path, file.Name())})
 		}
+		if includeFiles && file.Type().IsRegular() && organizer.IsVideo(file.Name()) && !strings.HasPrefix(file.Name(), ".") {
+			if len(videos) >= 10000 {
+				truncated = true
+				continue
+			}
+			info, err := file.Info()
+			if err == nil {
+				videos = append(videos, map[string]any{"name": file.Name(), "path": filepath.Join(path, file.Name()), "size": info.Size()})
+			}
+		}
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i]["name"] < dirs[j]["name"] })
-	reply(w, 200, map[string]any{"path": path, "parent": filepath.Dir(path), "dirs": dirs})
+	reply(w, 200, map[string]any{"path": path, "parent": filepath.Dir(path), "dirs": dirs, "files": videos, "truncated": truncated})
 }
 
 func (a *App) post(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +412,10 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 		reply(w, 200, map[string]bool{"ok": true})
 	case "/api/scan":
-		var input struct{ Source, Kind string }
+		var input struct {
+			Source, Kind string
+			Files        json.RawMessage `json:"files"`
+		}
 		if err := readJSON(w, r, &input); err != nil {
 			failure(w, 400, err)
 			return
@@ -408,17 +424,26 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 			failure(w, 400, errors.New("invalid media kind"))
 			return
 		}
-		root, err := canonicalDirectory(input.Source)
-		if err != nil {
-			failure(w, 400, err)
-			return
-		}
 		if !a.operation.TryLock() {
 			failure(w, 409, errors.New("другая операция ещё выполняется"))
 			return
 		}
 		defer a.operation.Unlock()
-		inventory, err := a.Engine.Scan(root, input.Kind)
+		var inventory organizer.Inventory
+		var err error
+		if len(input.Files) > 0 {
+			var paths []string
+			err = json.Unmarshal(input.Files, &paths)
+			if err == nil {
+				inventory, err = a.Engine.ScanFiles(paths, input.Kind)
+			}
+		} else {
+			var root string
+			root, err = canonicalDirectory(input.Source)
+			if err == nil {
+				inventory, err = a.Engine.Scan(root, input.Kind)
+			}
+		}
 		if err != nil {
 			failure(w, 400, err)
 			return
@@ -431,7 +456,7 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 		}
 		a.inventories[id] = inventory
 		a.mu.Unlock()
-		reply(w, 200, map[string]any{"inventoryId": id, "root": inventory.Root, "items": inventory.Items, "issues": inventory.Issues, "groups": matchGroups(inventory)})
+		reply(w, 200, map[string]any{"inventoryId": id, "root": inventory.Root, "items": inventory.Items, "issues": inventory.Issues, "groups": matchGroups(inventory), "explicit": inventory.Explicit})
 	case "/api/prepare", "/api/match":
 		a.matchRequest(w, r)
 	case "/api/search":

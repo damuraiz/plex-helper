@@ -7,7 +7,7 @@ const appBase = new URL('.', location.href).pathname;
 const state = {
   csrf: '', setup: false, authMode: 'local', dsmToken: '', settings: {}, inventory: null, inventoryId: '',
   selections: Object.create(null), focusId: '', draft: {}, plan: null,
-  confirmed: new Set(), excluded: new Set(), busy: 0, folder: null, folderTarget: '', groups: [], matches: {}, automatic: new Set(), preparing: false, operationActive: false, pollTimer: null, journalKey: ''
+  confirmed: new Set(), excluded: new Set(), busy: 0, folder: null, folderTarget: '', groups: [], matches: {}, automatic: new Set(), preparing: false, operationActive: false, pollTimer: null, journalKey: '', sourceMode: 'folder', sourceFiles: [], pickerFiles: new Set()
 };
 const kindLabel = kind => kind === 'tv' ? 'Сериал' : 'Фильм';
 const filename = path => String(path || '').split('/').pop();
@@ -52,7 +52,7 @@ function syncButtons() {
   $('create-plan').disabled = !state.inventory || !Object.keys(state.selections).length;
   $('apply-plan').disabled = !state.plan || !state.confirmed.size;
   $('confirm-all').disabled = !state.plan || !videoEntries().length;
-  $('folder-select').disabled = !state.folder;
+  $('folder-select').disabled = pickerIsFiles() ? !state.pickerFiles.size : !state.folder;
   $('folder-parent').disabled = !state.folder || !state.folder.parent || state.folder.parent === state.folder.path;
   if (state.operationActive) {
     $('prepare-button').disabled = true;
@@ -60,9 +60,12 @@ function syncButtons() {
     $('apply-plan').disabled = true;
     $('settings-form').querySelector('button[type=submit]').disabled = true;
   } else {
-    $('prepare-button').disabled = false;
+    $('prepare-button').disabled = state.sourceMode === 'files' && !state.sourceFiles.length;
     $('settings-form').querySelector('button[type=submit]').disabled = false;
   }
+  $('choose-files').disabled = state.operationActive;
+  $('clear-source-files').disabled = state.operationActive || !state.sourceFiles.length;
+  document.querySelectorAll('[name=source-mode]').forEach(el => { el.disabled = state.operationActive; });
 }
 
 async function api(path, body, quiet = false) {
@@ -197,7 +200,7 @@ function clearInventory() {
   $('candidates').replaceChildren();
   $('editor-content').hidden = true;
   $('editor-empty').hidden = false;
-  $('scan-summary').textContent = 'Начните с папки для подготовки';
+  $('scan-summary').textContent = state.sourceMode === 'files' ? `Выбрано файлов: ${state.sourceFiles.length}` : 'Выберите источник для подготовки';
 }
 
 function renderIssues(id, issues) {
@@ -574,23 +577,91 @@ async function refreshJournals() {
   }
 }
 
+function pickerIsFiles() { return state.folderTarget === 'scan-files'; }
+
+function renderSourceFiles() {
+  $('folder-source-field').hidden = state.sourceMode === 'files';
+  $('files-source-field').hidden = state.sourceMode !== 'files';
+  $('scan-source').required = state.sourceMode === 'folder';
+  $('source-file-count').textContent = state.sourceFiles.length ? `Выбрано: ${state.sourceFiles.length}` : 'Файлы не выбраны';
+  if (!state.inventory) $('scan-summary').textContent = state.sourceMode === 'files' ? `Выбрано файлов: ${state.sourceFiles.length}` : 'Выберите источник для подготовки';
+  const container = $('source-files-list');
+  container.replaceChildren();
+  container.hidden = state.sourceMode !== 'files' || !state.sourceFiles.length;
+  for (const path of state.sourceFiles) {
+    const row = node('li');
+    const text = node('span');
+    text.append(node('strong', filename(path)), node('small', path));
+    const remove = node('button', 'Убрать', 'quiet');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Убрать ${path} из выбора`);
+    remove.addEventListener('click', () => {
+      if (state.busy || state.operationActive) return;
+      state.sourceFiles = state.sourceFiles.filter(value => value !== path);
+      clearInventory(); renderSourceFiles();
+    });
+    row.append(text, remove); container.append(row);
+  }
+  syncButtons();
+}
+
+function visiblePickerFiles() {
+  const query = $('file-picker-filter').value.trim().toLocaleLowerCase();
+  return list(state.folder && state.folder.files).filter(file => file.name.toLocaleLowerCase().includes(query));
+}
+
+function updatePickerSelection() {
+  const files = visiblePickerFiles();
+  const selected = files.filter(file => state.pickerFiles.has(file.path)).length;
+  $('file-picker-all').checked = files.length > 0 && selected === files.length;
+  $('file-picker-all').indeterminate = selected > 0 && selected < files.length;
+  $('file-picker-all').disabled = !files.length || Boolean(state.busy);
+  $('file-picker-count').textContent = `Выбрано файлов: ${state.pickerFiles.size}`;
+  $('folder-select').textContent = pickerIsFiles() ? `Выбрать файлы (${state.pickerFiles.size})` : 'Выбрать эту папку';
+  syncButtons();
+}
+
+function renderPickerEntries() {
+  const container = $('folder-list');
+  container.replaceChildren();
+  for (const dir of list(state.folder && state.folder.dirs)) {
+    const button = node('button', dir.name);
+    button.type = 'button';
+    button.addEventListener('click', action(() => browseFolder(dir.path), 'folder-status'));
+    container.append(button);
+  }
+  if (!pickerIsFiles()) return;
+  const files = visiblePickerFiles();
+  for (const file of files) {
+    const label = node('label', undefined, 'picker-file');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox'; checkbox.checked = state.pickerFiles.has(file.path);
+    checkbox.setAttribute('aria-label', `Выбрать ${file.name}`);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) state.pickerFiles.add(file.path); else state.pickerFiles.delete(file.path);
+      updatePickerSelection();
+    });
+    const details = node('span');
+    details.append(node('strong', file.name), node('small', `${(file.size / (1024 ** 2)).toLocaleString('ru-RU', {maximumFractionDigits:1})} МБ`));
+    label.append(checkbox, details); container.append(label);
+  }
+  if (!files.length) container.append(node('p', 'Подходящих видеофайлов в этой папке нет.', 'help'));
+  updatePickerSelection();
+}
+
 async function browseFolder(path) {
   state.folder = null;
   $('folder-list').replaceChildren();
   $('folder-path').textContent = path || '/';
-  message('Чтение папок…', '', 'folder-status');
+  message('Чтение списка…', '', 'folder-status');
   try {
-    const result = await api(`/api/browse?path=${encodeURIComponent(path || '/')}`);
+    const result = await api(`/api/browse?path=${encodeURIComponent(path || '/')}${pickerIsFiles() ? '&files=1' : ''}`);
     state.folder = result;
     $('folder-path').textContent = result.path;
-    $('folder-list').replaceChildren();
-    for (const dir of list(result.dirs)) {
-      const button = node('button', dir.name);
-      button.type = 'button';
-      button.addEventListener('click', action(() => browseFolder(dir.path), 'folder-status'));
-      $('folder-list').append(button);
-    }
-    message(list(result.dirs).length ? '' : 'Вложенных доступных папок нет.', '', 'folder-status');
+    $('file-picker-directory').value = result.path;
+    $('file-picker-filter').value = '';
+    renderPickerEntries();
+    message(result.truncated ? 'Показаны первые 10 000 файлов. Выберите меньшую папку.' : pickerIsFiles() ? 'Отметьте нужные видеофайлы. Выбор сохраняется при переходе между папками.' : list(result.dirs).length ? '' : 'Вложенных доступных папок нет.', '', 'folder-status');
   } catch (error) { message(error.message, 'error', 'folder-status'); }
   syncButtons();
 }
@@ -634,14 +705,19 @@ $('scan-form').addEventListener('submit', action(async () => {
   message('Сканирование файлов…');
   clearInventory();
   renderIssues('scan-issues', []);
-  const result = await api('/api/scan', { source: $('scan-source').value.trim(), kind: $('scan-kind').value });
+  const input = {kind: $('scan-kind').value};
+  if (state.sourceMode === 'files') {
+    if (!state.sourceFiles.length) throw new Error('Выберите хотя бы один видеофайл на NAS.');
+    input.files = state.sourceFiles.slice();
+  } else { input.source = $('scan-source').value.trim(); }
+  const result = await api('/api/scan', input);
   state.inventory = result.inventory || result;
   state.inventoryId = result.inventoryId || '';
   state.groups = list(result.groups);
   renderIssues('scan-issues', state.inventory.issues);
   renderFiles();
   $('scan-summary').textContent = `${list(state.inventory.items).length} видеофайлов найдено`;
-  if (!list(state.inventory.items).length) { message('В этой папке нет видеофайлов.'); return; }
+  if (!list(state.inventory.items).length) { message('В выбранном источнике нет видеофайлов.'); return; }
   if (!state.settings.tmdbConfigured) {
     selectFile(state.inventory.items[0].id);
     message('Файлы найдены. Добавьте токен TMDB в настройках для автоматического поиска или выберите название вручную для всей группы.'); return;
@@ -723,7 +799,8 @@ $('apply-plan').addEventListener('click', action(async () => {
     await pending;
     clearInventory();
     await refreshJournals();
-    message('Выбранные операции применены. Журнал сохранён. Для следующих изменений выполните новое сканирование.', 'success');
+    state.sourceFiles = []; renderSourceFiles();
+    message('Выбранные операции применены. Журнал сохранён. Для следующих изменений выберите папку или файлы заново.', 'success');
   } catch (error) {
     if (error.result && error.result.journal) { clearInventory(); await refreshJournals(); }
     throw error;
@@ -736,20 +813,56 @@ $('refresh-history').addEventListener('click', action(async () => {
   message('Журнал обновлён.');
 }));
 
+document.querySelectorAll('[name=source-mode]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    state.sourceMode = radio.value;
+    clearInventory(); renderSourceFiles();
+  });
+});
+$('clear-source-files').addEventListener('click', () => {
+  state.sourceFiles = []; clearInventory(); renderSourceFiles();
+});
+
 document.querySelectorAll('[data-browse]').forEach(button => {
   button.addEventListener('click', action(async () => {
     state.folderTarget = button.dataset.browse;
+    state.pickerFiles = new Set(state.sourceFiles);
+    const files = pickerIsFiles();
+    $('folder-title').textContent = files ? 'Выбор файлов на NAS' : 'Выбор папки';
+    $('file-picker-tools').hidden = !files;
+    $('file-picker-path').hidden = !files;
+    $('file-picker-count').hidden = !files;
+    $('folder-select').textContent = files ? `Выбрать файлы (${state.pickerFiles.size})` : 'Выбрать эту папку';
     $('folder-dialog').showModal();
-    await browseFolder($(state.folderTarget).value.trim() || '/');
+    const path = files ? state.sourceFiles.length ? state.sourceFiles[0].slice(0, state.sourceFiles[0].lastIndexOf('/')) : $('scan-source').value.trim() || state.settings.sourceRoot : $(state.folderTarget).value.trim();
+    await browseFolder(path || '/');
   }, 'folder-status'));
 });
 $('folder-close').addEventListener('click', () => $('folder-dialog').close());
 $('folder-parent').addEventListener('click', action(() => browseFolder(state.folder.parent), 'folder-status'));
+$('file-picker-go').addEventListener('click', action(() => browseFolder($('file-picker-directory').value.trim()), 'folder-status'));
+$('file-picker-directory').addEventListener('keydown', event => {
+  if (event.key === 'Enter') { event.preventDefault(); $('file-picker-go').click(); }
+});
+$('file-picker-filter').addEventListener('input', renderPickerEntries);
+$('file-picker-all').addEventListener('change', event => {
+  visiblePickerFiles().forEach(file => {
+    if (event.target.checked) state.pickerFiles.add(file.path); else state.pickerFiles.delete(file.path);
+  });
+  renderPickerEntries();
+});
 $('folder-select').addEventListener('click', () => {
-  if (state.busy || !state.folder) return;
-  const input = $(state.folderTarget);
-  input.value = state.folder.path;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  if (state.busy) return;
+  if (pickerIsFiles()) {
+    if (!state.pickerFiles.size) return;
+    state.sourceFiles = Array.from(state.pickerFiles).sort();
+    clearInventory(); renderSourceFiles();
+  } else {
+    if (!state.folder) return;
+    const input = $(state.folderTarget);
+    input.value = state.folder.path;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   $('folder-dialog').close();
 });
 

@@ -31,7 +31,7 @@
       <div class="header-actions"><span id="dsm-user" class="badge" hidden></span><span id="version" class="badge"></span><button id="open-settings" class="quiet">Настройки</button><button id="logout" class="quiet">Выйти</button></div>
     </header>
     <main>
-      <div class="page-heading"><div><p class="eyebrow">ПОРЯДОК В МЕДИАТЕКЕ</p><h1>Подготовьте медиатеку</h1><p class="muted">Выберите папку → подготовьте имена → проверьте результат → переименуйте.</p></div><span class="local-pill"><span aria-hidden="true"></span>Файлы остаются на NAS</span></div>
+      <div class="page-heading"><div><p class="eyebrow">ПОРЯДОК В МЕДИАТЕКЕ</p><h1>Подготовьте медиатеку</h1><p class="muted">Выберите папку или файлы → подготовьте имена → проверьте результат → переименуйте.</p></div><span class="local-pill"><span aria-hidden="true"></span>Файлы остаются на NAS</span></div>
 
       <details id="settings-panel" class="panel settings">
         <summary>Настройки папок и метаданных</summary>
@@ -57,12 +57,15 @@
         <p class="help preview-help">Обновление страницы не прерывает обработку. «Остановить обработку» сохранит выполненные операции в журнале; отмена выполняется отдельно.</p>
       </section>
       <section class="panel scan-panel" aria-labelledby="scan-heading">
-        <div class="section-heading"><h2 id="scan-heading"><span class="step-number">1</span>Выберите папку</h2><span id="scan-summary" class="muted">Начните с папки для подготовки</span></div>
+        <div class="section-heading"><h2 id="scan-heading"><span class="step-number">1</span>Выберите папку или файлы</h2><span id="scan-summary" class="muted">Выберите источник для подготовки</span></div>
+        <fieldset class="source-modes"><legend>Источник</legend><label><input type="radio" name="source-mode" value="folder" checked> Целая папка</label><label><input type="radio" name="source-mode" value="files"> Отдельные файлы</label></fieldset>
         <form id="scan-form" class="scan-form">
-          <label class="grow">Папка для сканирования<div class="input-action"><input id="scan-source" placeholder="/volume1/downloads" required><button data-browse="scan-source" type="button">Обзор</button></div></label>
+          <label id="folder-source-field" class="grow">Папка для сканирования<div class="input-action"><input id="scan-source" placeholder="/volume1/downloads" required><button data-browse="scan-source" type="button">Обзор</button></div></label>
+          <div id="files-source-field" class="grow" hidden><label>Файлы на NAS</label><div class="input-action"><button id="choose-files" data-browse="scan-files" type="button">Выбрать файлы</button><span id="source-file-count" class="muted">Файлы не выбраны</span><button id="clear-source-files" class="quiet" type="button" disabled>Очистить выбор</button></div></div>
           <label class="kind-field">Содержимое<select id="scan-kind"><option value="auto">Определить автоматически</option><option value="movie">Фильмы</option><option value="tv">Сериалы</option></select></label>
           <button id="prepare-button" class="primary scan-button" type="submit">Подготовить</button>
         </form>
+        <ul id="source-files-list" class="source-files-list" hidden aria-label="Выбранные исходные файлы"></ul>
         <p class="help preview-help">Приложение найдёт фильмы и сериалы, выберет однозначные совпадения и подготовит предпросмотр. Серии одного сериала распознаются вместе. Файлы изменятся только после нажатия «Переименовать».</p>
         <div id="scan-issues" class="issues" hidden></div>
       </section>
@@ -119,6 +122,6 @@
     </main>
   </div>
 
-  <dialog id="folder-dialog" aria-labelledby="folder-title"><div class="dialog-header"><h2 id="folder-title">Выбор папки</h2><button id="folder-close" class="quiet" aria-label="Закрыть">✕</button></div><p id="folder-path" class="file-path"></p><button id="folder-parent" type="button" class="quiet">↑ На уровень выше</button><div id="folder-list" class="folder-list"></div><p id="folder-status" role="status" class="status"></p><div class="dialog-footer"><button id="folder-select" class="primary" type="button">Выбрать эту папку</button></div></dialog>
+  <dialog id="folder-dialog" aria-labelledby="folder-title"><div class="dialog-header"><h2 id="folder-title">Выбор папки</h2><button id="folder-close" class="quiet" aria-label="Закрыть">✕</button></div><p id="folder-path" class="file-path"></p><div id="file-picker-path" class="input-action" hidden><input id="file-picker-directory" aria-label="Папка на NAS" placeholder="/volume1/video/movie"><button id="file-picker-go" type="button">Перейти</button></div><button id="folder-parent" type="button" class="quiet">↑ На уровень выше</button><div id="file-picker-tools" class="file-picker-tools" hidden><input id="file-picker-filter" type="search" aria-label="Поиск файлов в текущей папке" placeholder="Найти по имени файла"><label class="inline-label"><input id="file-picker-all" type="checkbox">Выбрать все показанные файлы</label></div><div id="folder-list" class="folder-list"></div><p id="folder-status" role="status" class="status"></p><div class="dialog-footer"><span id="file-picker-count" class="muted" hidden></span><button id="folder-select" class="primary" type="button">Выбрать эту папку</button></div></dialog>
 </body>
 </html>

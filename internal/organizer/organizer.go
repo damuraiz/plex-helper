@@ -37,9 +37,10 @@ type Issue struct {
 	Message string `json:"message"`
 }
 type Inventory struct {
-	Root   string  `json:"root"`
-	Items  []Item  `json:"items"`
-	Issues []Issue `json:"issues"`
+	Root     string  `json:"root"`
+	Items    []Item  `json:"items"`
+	Issues   []Issue `json:"issues"`
+	Explicit bool    `json:"explicit,omitempty"`
 }
 type Entry struct {
 	ID          string   `json:"id"`
@@ -168,6 +169,8 @@ func video(path string) bool {
 	}
 	return false
 }
+
+func IsVideo(path string) bool { return video(path) }
 func subtitle(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".srt", ".ass", ".ssa", ".vtt", ".smi":
@@ -245,18 +248,13 @@ func (e *Engine) Plan(inv Inventory, library string, selections map[string]media
 	if !filepath.IsAbs(inv.Root) || filepath.Clean(inv.Root) != inv.Root {
 		return plan, fmt.Errorf("invalid inventory root")
 	}
-	if inside(library, inv.Root) {
+	if !inv.Explicit && inside(library, inv.Root) {
 		return plan, fmt.Errorf("library must be outside scanned input")
 	}
 	for _, path := range []string{inv.Root, library} {
 		if err = checkPath(path); err != nil {
 			return plan, err
 		}
-	}
-	// A sidecar matching multiple video containers is ambiguous; leave it untouched.
-	stems := map[string]int{}
-	for _, item := range inv.Items {
-		stems[strings.TrimSuffix(item.Parsed.Path, filepath.Ext(item.Parsed.Path))]++
 	}
 	for _, item := range inv.Items {
 		selected, ok := selections[item.ID]
@@ -324,13 +322,22 @@ func (e *Engine) Plan(inv Inventory, library string, selections map[string]media
 		destination := filepath.Join(library, rel)
 		plan.Entries = append(plan.Entries, Entry{ID: item.ID, Source: source, Destination: destination, Identity: id, Role: "video", MediaID: item.ID})
 		stem := strings.TrimSuffix(source, filepath.Ext(source))
-		if stems[stem] > 1 {
-			plan.Issues = append(plan.Issues, Issue{source, "same-stem video containers: ambiguous subtitles left untouched"})
-			continue
-		}
 		neighbors, err := os.ReadDir(filepath.Dir(source))
 		if err != nil {
 			return plan, err
+		}
+		// Include unselected neighbours: a shared subtitle must not be taken
+		// away from another container just because only one video was selected.
+		containers := 0
+		for _, neighbor := range neighbors {
+			path := filepath.Join(filepath.Dir(source), neighbor.Name())
+			if !neighbor.IsDir() && video(path) && strings.TrimSuffix(path, filepath.Ext(path)) == stem {
+				containers++
+			}
+		}
+		if containers > 1 {
+			plan.Issues = append(plan.Issues, Issue{source, "same-stem video containers: ambiguous subtitles left untouched"})
+			continue
 		}
 		for _, neighbor := range neighbors {
 			path := filepath.Join(filepath.Dir(source), neighbor.Name())
