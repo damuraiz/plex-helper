@@ -2,6 +2,8 @@
 
 Дата: 14 октября 2026. Целевая система — Synology DS920+ с DSM
 7.3.2-86009 Update 4. Локальная машина разработки — macOS arm64, Go1.25.14.
+Дополнительно [успешный GitHub CI](https://github.com/damuraiz/plex-helper/actions/runs/38596356709)
+проверил те же исходники на Ubuntu24.04 x86-64 с Go1.25.14/Python3.12.
 
 ## Проверено локально
 
@@ -21,6 +23,7 @@
 | Интерфейс | Проверены modal folder browser, ошибка отсутствующего токена, истечение сессии, сохранённые настройки после reload; JS/CSP console без ошибок; width390 без горизонтального переполнения |
 | Linux бинарник | Builder проверил ELF64 little-endian x86-64 и отсутствие PT_INTERP; CGO0 / GOAMD64v1 / static build |
 | Пакет | Две полные сборки `.spk` побайтово равны. Проверены INFO, modes, paths, nested tgz, privilege/resource, UI и service hooks |
+| Linux CI | Полные `go test -race ./...`, воспроизводимая сборка и service tests прошли на Ubuntu24.04; готовый SPK сохранён как artifact |
 | Служба | Собранный локальный бинарник прошёл start/status/stop, повторный start, stale/foreign/reused PID refusal. Состояние не меняется при локальном запуске upgrade/reinstall/uninstall hooks |
 
 Команды: `go test ./...`, `go test -race ./...`, `go vet ./...`,

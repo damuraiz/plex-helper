@@ -62,7 +62,7 @@ sha256sum dist/plex-helper-x86_64-0.1.0-1.spk
 
 На macOS вместо `sha256sum` можно использовать `shasum -a 256`. Builder закрепляет `CGO_ENABLED=0`, `GOOS=linux`, `GOARCH=amd64`, `GOAMD64=v1`, `-trimpath`, `-buildvcs=false`, `-ldflags='-s -w -buildid='`; фиксирует порядок tar, владельцев, права, timestamps и gzip timestamp. Пакет содержит статический ELF64 x86-64, JSON DSM ресурсов, жизненный цикл, мастер и оригинальные значки. Builder отказывается упаковывать macOS/Mach-O или ELF с `PT_INTERP`. Уже собранный бинарник можно передать как `--binary /путь/к/linux-amd64/plex-helper`. Параметр `--version` меняет номер пакета; runtime версию задают исходники приложения.
 
-GitHub workflow `.github/workflows/build.yml` выполняет проверки и сохраняет SPK как artifact. Это конфигурация будущего CI: удаленный workflow не запускался в рамках локальной подготовки.
+GitHub workflow `.github/workflows/build.yml` выполняет проверки и сохраняет SPK как artifact. [Запуск 38596356709](https://github.com/damuraiz/plex-helper/actions/runs/38596356709) успешно выполнил тесты и сборку на Ubuntu 24.04, Go1.25.14/Python3.12. Выдаваемый SPK получен из этого запуска. Проверки Linux не заменяют установку на DSM.
 
 ## Что проверено и что требуется на NAS
 
