@@ -1,0 +1,3 @@
+#!/bin/sh
+# DSM stops the old service first. Data lives in pkgvar, never in target.
+exit 0

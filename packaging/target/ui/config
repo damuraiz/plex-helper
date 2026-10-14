@@ -1,0 +1,12 @@
+{
+  ".url": {
+    "com.damuraiz.plexhelper": {
+      "type": "url",
+      "icon": "images/plex-helper_{0}.png",
+      "title": "Plex Helper",
+      "desc": "Organize films and television for Plex",
+      "url": "3rdparty/plex-helper/launch.html",
+      "allUsers": false
+    }
+  }
+}

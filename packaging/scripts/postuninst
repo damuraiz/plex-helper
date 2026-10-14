@@ -1,0 +1,3 @@
+#!/bin/sh
+# FHS persistent var is deliberately retained; this hook never removes media/data.
+exit 0

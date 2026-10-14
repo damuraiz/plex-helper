@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Plex Helper · Медиатека</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="auth-view" class="auth-wrap" hidden>
+    <section class="auth-card">
+      <div class="brand-icon" aria-hidden="true">P<span>H</span></div>
+      <p class="eyebrow">ВАША МЕДИАТЕКА. ВАШИ ПРАВИЛА.</p>
+      <h1>Plex Helper</h1>
+      <p id="auth-description" class="muted">Войдите, чтобы работать с медиатекой на NAS.</p>
+      <form id="auth-form">
+        <label id="setup-token-label" hidden>Токен первой настройки<input id="setup-token" autocomplete="off" type="password"></label>
+        <label>Пароль администратора<input id="auth-password" type="password" autocomplete="current-password" required></label>
+        <button id="auth-submit" class="primary" type="submit">Войти</button>
+      </form>
+      <p id="auth-status" role="status" class="status"></p>
+    </section>
+  </div>
+
+  <div id="app-view" hidden>
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="Plex Helper, главная"><span class="brand-icon small" aria-hidden="true">P<span>H</span></span><span>Plex Helper<small>Медиатека на вашем NAS</small></span></a>
+      <div class="header-actions"><span id="version" class="badge"></span><button id="open-settings" class="quiet">Настройки</button><button id="logout" class="quiet">Выйти</button></div>
+    </header>
+    <main>
+      <div class="page-heading"><div><p class="eyebrow">ПОРЯДОК В МЕДИАТЕКЕ</p><h1>Готово к просмотру</h1><p class="muted">Распознайте фильмы и серии, проверьте имена и подтвердите изменения.</p></div><span class="local-pill"><span aria-hidden="true"></span>Файлы остаются на NAS</span></div>
+
+      <details id="settings-panel" class="panel settings">
+        <summary>Настройки папок и метаданных</summary>
+        <form id="settings-form">
+          <div class="form-grid">
+            <label>Папка с исходными файлами<div class="input-action"><input id="settings-source" placeholder="/volume1/downloads" required><button data-browse="settings-source" type="button">Обзор</button></div></label>
+            <label>Папка медиатеки Plex<div class="input-action"><input id="settings-library" placeholder="/volume1/video" required><button data-browse="settings-library" type="button">Обзор</button></div></label>
+            <label>Язык метаданных<select id="settings-language"><option value="ru-RU">Русский</option><option value="en-US">English</option></select></label>
+            <label>TMDB Read Access Token или API key<input id="settings-token" type="password" autocomplete="off" placeholder="Вставьте собственный токен или API key"></label>
+          </div>
+          <div class="settings-footer"><div><p id="token-status" class="muted"></p><label class="inline-label"><input id="clear-token" type="checkbox">Удалить сохранённый токен</label></div><button class="primary" type="submit">Сохранить настройки</button></div>
+          <p class="help">Получите собственный токен в настройках API аккаунта TMDB. Пакету нужен доступ на чтение и запись к выбранным папкам: DSM → Панель управления → Общая папка → Разрешения → Внутренний пользователь системы → plex-helper.</p>
+        </form>
+      </details>
+
+      <div id="global-status" class="status global-status" role="status" aria-live="polite"></div>
+      <section class="panel scan-panel" aria-labelledby="scan-heading">
+        <div class="section-heading"><h2 id="scan-heading"><span class="step-number">1</span>Найдите файлы</h2><span id="scan-summary" class="muted">Начните с папки для сканирования</span></div>
+        <form id="scan-form" class="scan-form">
+          <label class="grow">Папка для сканирования<div class="input-action"><input id="scan-source" placeholder="/volume1/downloads" required><button data-browse="scan-source" type="button">Обзор</button></div></label>
+          <label class="kind-field">Содержимое<select id="scan-kind"><option value="auto">Определить автоматически</option><option value="movie">Фильмы</option><option value="tv">Сериалы</option></select></label>
+          <button class="primary scan-button" type="submit">Сканировать</button>
+        </form>
+        <div id="scan-issues" class="issues" hidden></div>
+      </section>
+
+      <section id="workspace" class="workspace" hidden aria-label="Распознавание файлов">
+        <div class="panel file-panel">
+          <div class="section-heading"><h2><span class="step-number">2</span>Проверьте совпадения</h2><span id="file-count" class="badge"></span></div>
+          <div class="table-scroll"><table class="file-table"><thead><tr><th>Исходный файл</th><th>Распознано</th><th>Состояние</th></tr></thead><tbody id="file-list"></tbody></table></div>
+          <div id="empty-files" class="empty" hidden>В этой папке не найдено поддерживаемых видеофайлов.</div>
+          <div class="panel-footer"><span id="matched-count" class="muted"></span><button id="create-plan" class="primary" type="button">Предпросмотр изменений</button></div>
+        </div>
+
+        <aside class="panel editor" aria-labelledby="editor-heading">
+          <h2 id="editor-heading">Карточка файла</h2>
+          <div id="editor-empty" class="empty">Выберите файл слева, чтобы найти метаданные или исправить распознавание.</div>
+          <div id="editor-content" hidden>
+            <p id="editor-path" class="file-path"></p>
+            <form id="search-form"><label>Название для поиска<div class="input-action"><input id="search-query" required><button class="primary" type="submit">Найти</button></div></label></form>
+            <p id="search-hint" class="help">Поиск использует ваш токен TMDB.</p>
+            <div id="candidates" class="candidates" aria-live="polite"></div>
+            <form id="manual-form">
+              <div class="divider-label">ПРОВЕРЬТЕ ИЛИ ИСПРАВЬТЕ</div>
+              <label>Название<input id="edit-title" required></label>
+              <div class="form-grid compact"><label>Тип<select id="edit-kind"><option value="movie">Фильм</option><option value="tv">Сериал</option></select></label><label>Год<input id="edit-year" type="number" min="1800" max="2200"></label></div>
+              <div id="episode-fields"><div class="form-grid compact"><label>Сезон<input id="edit-season" type="number" min="0" max="999"></label><label>Эпизоды<input id="edit-episodes" placeholder="1 или 1,2"></label></div><label>Дата эфира<input id="edit-airdate" type="date"></label></div>
+              <div class="form-grid compact"><label>Провайдер<select id="edit-provider"><option value="">Без ID</option><option value="tmdb">TMDB</option><option value="tvdb">TVDB</option><option value="imdb">IMDb</option></select></label><label>ID<input id="edit-id" autocomplete="off" placeholder="Например, 550"></label></div>
+              <button class="primary full-width" type="submit">Подтвердить совпадение</button>
+            </form>
+          </div>
+        </aside>
+      </section>
+
+      <section id="preview-panel" class="panel" hidden aria-labelledby="preview-heading">
+        <div class="section-heading"><h2 id="preview-heading"><span class="step-number">3</span>Было → станет</h2><span id="preview-count" class="badge"></span></div>
+        <p class="help preview-help">Отметьте видеофайлы, которые нужно перенести и переименовать. Связанные субтитры входят в ту же операцию.</p>
+        <div id="plan-issues" class="issues" hidden></div>
+        <div class="table-scroll"><table class="preview-table"><thead><tr><th><label class="inline-label"><input id="confirm-all" type="checkbox" aria-label="Выбрать все видеофайлы">Выбрать</label></th><th>Было</th><th>Станет</th></tr></thead><tbody id="preview-list"></tbody></table></div>
+        <div class="panel-footer"><span id="confirmation-count" class="muted">Ни одна операция не выбрана</span><button id="apply-plan" class="primary" type="button">Применить выбранное</button></div>
+      </section>
+
+      <section class="panel history-panel" aria-labelledby="history-heading">
+        <div class="section-heading"><h2 id="history-heading">Журнал изменений</h2><button id="refresh-history" class="quiet" type="button">Обновить</button></div>
+        <p class="help">Отмена доступна, пока перенесённые файлы не изменились и исходные пути свободны.</p>
+        <div id="history-list"></div><p id="history-empty" class="empty">Подтверждённые операции появятся здесь.</p>
+      </section>
+      <details class="panel credits"><summary>О приложении и метаданных</summary><p>Plex Helper — самостоятельное открытое приложение, MIT.</p><a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer"><img src="/tmdb.svg" width="100" height="13" alt="TMDB"></a><p class="help">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></details>
+      <footer class="app-footer">Plex Helper · Открытое приложение для вашей медиатеки<span>Проверяйте предпросмотр перед применением</span></footer>
+    </main>
+  </div>
+
+  <dialog id="folder-dialog" aria-labelledby="folder-title"><div class="dialog-header"><h2 id="folder-title">Выбор папки</h2><button id="folder-close" class="quiet" aria-label="Закрыть">✕</button></div><p id="folder-path" class="file-path"></p><button id="folder-parent" type="button" class="quiet">↑ На уровень выше</button><div id="folder-list" class="folder-list"></div><p id="folder-status" role="status" class="status"></p><div class="dialog-footer"><button id="folder-select" class="primary" type="button">Выбрать эту папку</button></div></dialog>
+</body>
+</html>

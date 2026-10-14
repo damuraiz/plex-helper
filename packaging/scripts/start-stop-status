@@ -1,0 +1,125 @@
+#!/bin/sh
+# DSM invokes this script as the package's internal user. No root/chown hacks.
+set -eu
+umask 077
+unset wizard_admin_password
+data=${SYNOPKG_PKGVAR:-/var/packages/plex-helper/var}
+target=${SYNOPKG_PKGDEST:-/var/packages/plex-helper/target}
+binary="$target/bin/plex-helper"
+pidfile="$data/service.pid"
+birthfile="$data/service.birth"
+logfile="$data/service.log"
+lockdir="$data/service.lock"
+
+read_pid() {
+    [ -f "$pidfile" ] || return 1
+    IFS= read -r pid < "$pidfile" || return 1
+    case "$pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
+}
+
+process_birth() {
+    if [ -d /proc/1 ]; then
+        # After stripping PID and parenthesized comm, starttime is field 20.
+        awk '{sub(/^[0-9]+ \(.*\) /, ""); print $20}' "/proc/$pid/stat" 2>/dev/null
+    else
+        ps -p "$pid" -o lstart= 2>/dev/null
+    fi
+}
+
+is_running() {
+    read_pid || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    [ -f "$birthfile" ] || return 1
+    IFS= read -r expected_birth < "$birthfile" || return 1
+    actual_birth=$(process_birth) || return 1
+    [ -n "$actual_birth" ] && [ "$actual_birth" = "$expected_birth" ] || return 1
+    # PID reuse must never cause us to signal another program. Linux procfs is
+    # available on DSM; the ps fallback enables macOS lifecycle smoke tests.
+    if [ -d /proc/1 ]; then
+        actual=$(readlink "/proc/$pid/exe" 2>/dev/null) || return 1
+        expected=$(readlink -f "$binary" 2>/dev/null) || return 1
+        [ "$actual" = "$expected" ] || return 1
+        proc_uid=$(awk '/^Uid:/{print $2}' "/proc/$pid/status" 2>/dev/null) || return 1
+        [ "$proc_uid" = "$(id -u)" ] || return 1
+    else
+        proc_uid=$(ps -p "$pid" -o uid= 2>/dev/null | tr -d ' ') || return 1
+        [ "$proc_uid" = "$(id -u)" ] || return 1
+        command=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+        case "$command" in "$binary --listen "*) ;; *) return 1 ;; esac
+    fi
+}
+
+acquire_lock() {
+    mkdir -p "$data"
+    if ! mkdir "$lockdir" 2>/dev/null; then
+        printf '%s\n' 'Another lifecycle action is running (or a stale service.lock needs administrator review).' >&2
+        exit 1
+    fi
+    trap 'rmdir "$lockdir" 2>/dev/null || true' EXIT
+    trap 'exit 1' HUP INT TERM
+}
+
+start_service() {
+    acquire_lock
+    is_running && return 0
+    [ -x "$binary" ] || { printf '%s\n' 'Missing server executable.' >&2; return 1; }
+    rm -f "$pidfile" "$birthfile"
+    listen=:8650
+    if [ -f "$data/service-listen" ]; then
+        IFS= read -r listen < "$data/service-listen"
+        [ -n "$listen" ] || { printf '%s\n' 'Empty service-listen.' >&2; return 1; }
+    fi
+    set -- --listen "$listen" --data "$data"
+    if [ -f "$data/service-tls-cert" ] || [ -f "$data/service-tls-key" ]; then
+        IFS= read -r cert < "$data/service-tls-cert"
+        IFS= read -r key < "$data/service-tls-key"
+        [ -r "$cert" ] && [ -r "$key" ] || { printf '%s\n' 'TLS certificate/key unreadable.' >&2; return 1; }
+        set -- "$@" --tls-cert "$cert" --tls-key "$key"
+    fi
+    if [ -f "$logfile" ] && [ "$(wc -c < "$logfile")" -gt 1048576 ]; then
+        mv -f "$logfile" "$logfile.previous"
+    fi
+    # Bound CPU scheduling and Go's soft memory target on a 4 GB NAS. This is
+    # not a hard RSS limit; streaming media files does not load them into RAM.
+    GOMAXPROCS=2 GOMEMLIMIT=256MiB "$binary" "$@" >> "$logfile" 2>&1 < /dev/null &
+    pid=$!
+    process_birth > "$birthfile.new"
+    mv -f "$birthfile.new" "$birthfile"
+    printf '%s\n' "$pid" > "$pidfile.new"
+    mv -f "$pidfile.new" "$pidfile"
+    sleep 2
+    if ! is_running; then
+        rm -f "$pidfile" "$birthfile"
+        printf '%s\n' "Server exited at startup; inspect $logfile." >&2
+        return 1
+    fi
+}
+
+stop_service() {
+    acquire_lock
+    if ! is_running; then
+        rm -f "$pidfile" "$birthfile"
+        return 0
+    fi
+    kill -TERM "$pid"
+    remaining=30
+    while is_running; do
+        if [ "$remaining" -le 0 ]; then
+            printf '%s\n' 'Server did not stop within 30 seconds; do not kill it while a file operation is active.' >&2
+            return 1
+        fi
+        sleep 1
+        remaining=$((remaining - 1))
+    done
+    rm -f "$pidfile" "$birthfile"
+}
+
+case "${1:-}" in
+    start) start_service ;;
+    stop) stop_service ;;
+    status) if is_running; then exit 0; fi; [ ! -f "$pidfile" ] || exit 1; exit 3 ;;
+    prestart) [ -x "$binary" ] || exit 150 ;;
+    prestop) exit 0 ;;
+    log) printf '%s\n' "$logfile" ;;
+    *) printf '%s\n' 'Usage: start-stop-status {start|stop|status|prestart|prestop|log}' >&2; exit 1 ;;
+esac

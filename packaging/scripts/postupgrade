@@ -1,0 +1,3 @@
+#!/bin/sh
+# Keep credentials, settings and journals. DSM restarts previously running packages.
+exit 0

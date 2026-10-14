@@ -1,0 +1,3 @@
+#!/bin/sh
+# Preserve app data both during upgrades and actual uninstallation.
+exit 0

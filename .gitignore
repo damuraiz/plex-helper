@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+.env
+*.egg-info/
+research/evidence/
+research/derived/
+local-data/
+dist/
