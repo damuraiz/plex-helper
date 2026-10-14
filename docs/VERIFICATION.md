@@ -207,7 +207,24 @@ File Station подтвердил E01 (9,3 ГБ) в ошибочно удвое�
   среды, не реальный медиаконтент и не замер скорости NAS.
 - go test -race ./..., go vet ./..., node --check, SPK reproducibility/lifecycle.
 
-Новые fast Apply/Undo, ctime и остановка из UI на DSM пока требуют проверки
-на отдельной тестовой медиатеке NAS.
+На DSM установлена 0.2.1-1. В отдельной папке
+`/volume1/video/plex-helper-verification-021/` создан искусственный файл 67 байт.
+Apply переместил его из incoming в `TV Shows/The Idol (2023) {tmdb-135251}/Season 01/`
+с английским названием эпизода без второго TV Shows. Undo вернул его в incoming;
+File Station подтвердил исходное имя и размер. Журнал теста
+`8fc53cc072fce703e50decc69a5bdd3e` — undone, одна запись restored.
+Это подтверждает fast rename/ctime Undo и права package user на NAS.
+Исходные sourceRoot=/volume1/video/serial и libraryRoot=/volume1/video/TV Shows
+восстановлены; namingLanguage=en-US, language=ru-RU, токен сохранён.
+Reload приложения открывает журнал и активные кнопки. Настоящая E01 и
+прерванный старый журнал не изменялись; нового Apply/Undo настоящей медиатеки нет.
+Тестовая папка и файл оставлены для повторной проверки.
+Остановка/проценты во время долгого копирования на реальном NAS, reboot,
+logout/non-admin и крупные cross-volume операции остаются непроверенными.
 Снимки: [english-preview.jpg](assets/english-preview.jpg),
 [operation-progress.jpg](assets/operation-progress.jpg).
+
+Снимок теста NAS: [fast-undo-nas.jpg](assets/fast-undo-nas.jpg).
+Linux CI [run38618622859](https://github.com/damuraiz/plex-helper/actions/runs/38618622859) — success.
+SPK из CI, локальный пакет и загруженный в DSM файл побайтово совпадают.
+SHA256 `62b6a24bc2eb3114424bb55605254ba7312085f3c82fdc1be474614bca31f77c`.
