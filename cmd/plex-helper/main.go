@@ -18,7 +18,7 @@ import (
 	"github.com/damuraiz/plex-helper/internal/server"
 )
 
-var version = "0.1.1"
+var version = "0.2.0"
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8650", "HTTP listen address")

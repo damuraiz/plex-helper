@@ -19,20 +19,23 @@ var languagePattern = regexp.MustCompile(`^[a-z]{2}(-[A-Z]{2})?$`)
 var idPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 type Candidate struct {
-	Kind     string `json:"kind"`
-	Title    string `json:"title"`
-	Year     int    `json:"year"`
-	Provider string `json:"provider"`
-	ID       string `json:"id"`
-	Overview string `json:"overview"`
+	Kind          string `json:"kind"`
+	Title         string `json:"title"`
+	Year          int    `json:"year"`
+	Provider      string `json:"provider"`
+	ID            string `json:"id"`
+	Overview      string `json:"overview"`
+	OriginalTitle string `json:"originalTitle,omitempty"`
 }
 type tmdbItem struct {
-	ID           int    `json:"id"`
-	Title        string `json:"title"`
-	Name         string `json:"name"`
-	ReleaseDate  string `json:"release_date"`
-	FirstAirDate string `json:"first_air_date"`
-	Overview     string `json:"overview"`
+	ID            int    `json:"id"`
+	Title         string `json:"title"`
+	Name          string `json:"name"`
+	OriginalTitle string `json:"original_title"`
+	OriginalName  string `json:"original_name"`
+	ReleaseDate   string `json:"release_date"`
+	FirstAirDate  string `json:"first_air_date"`
+	Overview      string `json:"overview"`
 }
 
 type TMDB struct {
@@ -129,7 +132,11 @@ func (t *TMDB) Search(ctx context.Context, query, kind string, year int) ([]Cand
 	results := make([]Candidate, 0, len(payload.Results))
 	for _, item := range payload.Results {
 		title, year := itemFields(item, kind)
-		results = append(results, Candidate{Kind: kind, Title: title, Year: year, Provider: "tmdb", ID: strconv.Itoa(item.ID), Overview: item.Overview})
+		original := item.OriginalTitle
+		if kind == "tv" {
+			original = item.OriginalName
+		}
+		results = append(results, Candidate{Kind: kind, Title: title, Year: year, Provider: "tmdb", ID: strconv.Itoa(item.ID), Overview: item.Overview, OriginalTitle: original})
 	}
 	return results, nil
 }

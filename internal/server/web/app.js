@@ -7,7 +7,7 @@ const appBase = new URL('.', location.href).pathname;
 const state = {
   csrf: '', setup: false, authMode: 'local', dsmToken: '', settings: {}, inventory: null, inventoryId: '',
   selections: Object.create(null), focusId: '', draft: {}, plan: null,
-  confirmed: new Set(), busy: 0, folder: null, folderTarget: ''
+  confirmed: new Set(), excluded: new Set(), busy: 0, folder: null, folderTarget: '', groups: [], matches: {}, automatic: new Set(), preparing: false
 };
 const kindLabel = kind => kind === 'tv' ? 'Сериал' : 'Фильм';
 const filename = path => String(path || '').split('/').pop();
@@ -47,7 +47,7 @@ function setBusy(delta) {
 }
 
 function syncButtons() {
-  if (state.busy) return;
+  if (state.busy || state.preparing) return;
   $('create-plan').disabled = !state.inventory || !Object.keys(state.selections).length;
   $('apply-plan').disabled = !state.plan || !state.confirmed.size;
   $('confirm-all').disabled = !state.plan || !videoEntries().length;
@@ -89,7 +89,7 @@ async function api(path, body) {
 function action(handler, target = 'global-status') {
   return async event => {
     event.preventDefault();
-    if (state.busy) return;
+    if (state.busy || state.preparing) return;
     try { await handler(event); }
     catch (error) { message(error.message || 'Не удалось выполнить операцию.', 'error', target); }
   };
@@ -172,13 +172,17 @@ function clearInventory() {
   state.selections = Object.create(null);
   state.focusId = '';
   state.draft = {};
+  state.groups = [];
+  state.matches = {};
+  state.automatic.clear();
+  state.excluded.clear();
   clearPlan();
   $('workspace').hidden = true;
   $('file-list').replaceChildren();
   $('candidates').replaceChildren();
   $('editor-content').hidden = true;
   $('editor-empty').hidden = false;
-  $('scan-summary').textContent = 'Начните с папки для сканирования';
+  $('scan-summary').textContent = 'Начните с папки для подготовки';
 }
 
 function renderIssues(id, issues) {
@@ -204,10 +208,29 @@ function renderFiles() {
   $('workspace').hidden = false;
   $('file-count').textContent = `${items.length} файлов`;
   $('empty-files').hidden = Boolean(items.length);
-  $('matched-count').textContent = `Подтверждено: ${Object.keys(state.selections).length} из ${items.length}`;
+  const ready = Object.keys(state.selections).length;
+  $('matched-count').textContent = `Готово: ${ready} из ${items.length}`;
+  $('match-summary').textContent = ready === items.length && items.length
+    ? 'Все совпадения выбраны. Проверьте предпросмотр ниже. Если нужно, нажмите название сериала или файла, чтобы заменить совпадение.'
+    : `Требуют проверки: ${items.length - ready}. Выберите название сериала один раз для всех его серий. Файлы с неясным номером серии исправьте вручную.`;
   const body = $('file-list');
   body.replaceChildren();
-  for (const item of items) {
+  const groupedItems = state.groups.flatMap(g => g.itemIds.map(id => items.find(item => item.id === id)).filter(Boolean));
+  const groupStarts = new Map(state.groups.filter(g => g.kind === 'tv' && g.itemIds.length > 1).map(g => [g.itemIds[0], g]));
+  for (const item of groupedItems.length ? groupedItems : items) {
+    const group = groupStarts.get(item.id);
+    if (group) {
+      const row = node('tr', undefined, 'series-group');
+      const cell = node('td'); cell.colSpan = 3;
+      const resolved = group.itemIds.map(id => state.selections[id]).find(Boolean);
+      const button = node('button', `${(resolved || group).title} · ${group.itemIds.length} файлов`, 'series-button');
+      button.type = 'button';
+      button.addEventListener('click', () => { if (!state.busy && !state.preparing) { selectFile(group.itemIds.find(id => !state.selections[id]) || group.itemIds[0]); $('editor-heading').scrollIntoView({behavior:'smooth',block:'center'}); } });
+      cell.append(button, node('span', 'Выбрать или заменить сериал сразу для всей группы', 'help'));
+      const match = state.matches[group.id];
+      if (match && match.reason) cell.append(node('p', match.reason, 'warning'));
+      row.append(cell); body.append(row);
+    }
     const parsed = item.parsed || {};
     const selected = state.selections[item.id];
     const tr = node('tr');
@@ -216,14 +239,17 @@ function renderFiles() {
     const button = node('button', filename(parsed.path), 'filename-button');
     button.type = 'button';
     button.title = parsed.path || '';
-    button.addEventListener('click', () => { if (!state.busy) selectFile(item.id); });
+    button.addEventListener('click', () => { if (!state.busy && !state.preparing) selectFile(item.id); });
     file.append(button, node('div', parsed.path, 'file-detail'));
     const recognized = node('td');
     recognized.append(node('div', (selected || parsed).title || 'Название не определено', 'recognized-title'));
     recognized.append(node('div', hintText({ ...parsed, ...(selected || {}) }), 'file-detail'));
     if (list(parsed.warnings).length) recognized.append(node('div', parsed.warnings.join('; '), 'warning'));
     const status = node('td');
-    status.append(node('span', selected ? 'Подтверждено' : 'Проверить', `match-pill${selected ? ' done' : ''}`));
+    status.append(node('span', selected ? (state.automatic.has(item.id) ? 'Подобрано' : 'Выбрано') : 'Проверить', `match-pill${selected ? ' done' : ''}`));
+    const match = state.matches[(groupFor(item.id) || {}).id];
+    const issue = match && list(match.issues).find(issue => issue.source === parsed.path);
+    if (issue) status.append(node('p', issue.message, 'warning'));
     tr.append(file, recognized, status);
     body.append(tr);
   }
@@ -231,6 +257,26 @@ function renderFiles() {
 }
 
 function currentItem() { return list(state.inventory && state.inventory.items).find(item => item.id === state.focusId); }
+function groupFor(id) { return state.groups.find(group => group.itemIds.includes(id)); }
+function matchScope() { return $('match-scope').value; }
+function matchingSeasons() {
+  const group = groupFor(state.focusId);
+  const seasons = matchScope() === 'group' && group ? [...group.seasons] : [];
+  if ($('edit-season').value !== '') seasons.push(Number($('edit-season').value));
+  if (group && matchScope() === 'group') for (const id of group.itemIds) {
+    const prior = state.selections[id];
+    if (prior && prior.season !== undefined && prior.season !== null) seasons.push(prior.season);
+  }
+  return [...new Set(seasons)].sort((a,b) => a-b);
+}
+function updateScope() {
+  const group = groupFor(state.focusId);
+  const count = matchScope() === 'group' && group ? group.itemIds.length : 1;
+  $('save-match').textContent = count > 1 ? `Применить ко всем ${count} файлам` : 'Применить к файлу';
+  $('group-hint').textContent = count > 1
+    ? `Название, год и ID будут общими для ${count} файлов. Сезон и номер каждой серии сохранятся. Поля номеров ниже изменяют только выбранный файл.`
+    : 'Изменения относятся только к выбранному файлу.';
+}
 
 function selectFile(id) {
   state.focusId = id;
@@ -247,9 +293,17 @@ function selectFile(id) {
   $('editor-content').hidden = false;
   $('editor-path').textContent = parsed.path;
   $('search-query').value = state.draft.title;
+  const group = groupFor(id);
+  const isSeries = parsed.kind === 'tv';
+  $('scope-label').hidden = !isSeries || !group || group.itemIds.length < 2;
+  $('match-scope').value = isSeries && group && group.itemIds.length > 1 ? 'group' : 'file';
+  $('manual-details').open = false;
   $('candidates').replaceChildren();
   fillEditor(state.draft);
+  updateScope();
   renderFiles();
+  const match = group && state.matches[group.id];
+  if (match && !state.selections[id] && match.candidates.length) renderCandidates(match.candidates);
 }
 
 function fillEditor(metadata) {
@@ -320,7 +374,7 @@ function renderCandidates(candidates) {
     if (candidate.overview) button.append(node('small', candidate.overview));
     button.addEventListener('click', action(async () => {
       const itemId = state.focusId;
-      const seasons = $('edit-season').value !== '' ? [Number($('edit-season').value)] : [];
+      const seasons = candidate.kind === 'tv' ? matchingSeasons() : [];
       const metadata = await api('/api/metadata', { kind: candidate.kind, id: String(candidate.id), seasons });
       if (itemId !== state.focusId) return;
       // Keep user-editable episode coordinates when replacing the series identity.
@@ -334,15 +388,38 @@ function renderCandidates(candidates) {
         $('edit-episodes').value = episodes;
         $('edit-airdate').value = airDate;
       }
-      invalidateDraft();
+      if (candidate.kind !== 'tv') $('match-scope').value = 'file';
+      updateScope();
+      const selected = await saveMatch(readEditor());
       container.querySelectorAll('button').forEach(el => el.classList.toggle('selected', el === button));
-      message('Метаданные загружены. Проверьте карточку и подтвердите совпадение.');
+      await createPlan();
+      message(`Выбрано «${metadata.title}» для ${selected} файлов. Проверьте предпросмотр; файлы ещё не изменены.`, 'success');
     }));
     container.append(button);
   }
 }
 
 function videoEntries() { return list(state.plan && state.plan.entries).filter(entry => entry.role === 'video'); }
+async function saveMatch(metadata) {
+  const group = groupFor(state.focusId);
+  const result = await api('/api/match', {inventoryId:state.inventoryId, itemId:state.focusId, scope:matchScope(), metadata, selections:state.selections});
+  const affected = matchScope() === 'group' && group ? group.itemIds : [state.focusId];
+  for (const id of affected) { delete state.selections[id]; state.automatic.delete(id); }
+  Object.assign(state.selections, result.selections);
+  if (group) state.matches[group.id] = result;
+  state.draft = copy(metadata);
+  clearPlan(); renderFiles();
+  return Object.keys(result.selections).length;
+}
+
+async function createPlan() {
+  clearPlan();
+  if (!Object.keys(state.selections).length) return;
+  if (!state.settings.libraryRoot) { $('settings-panel').open = true; throw new Error('Сначала сохраните папку медиатеки в настройках.'); }
+  state.plan = await api('/api/plan', {inventoryId:state.inventoryId, library:state.settings.libraryRoot, selections:state.selections});
+  videoEntries().filter(entry => !state.excluded.has(entry.mediaId)).forEach(entry => state.confirmed.add(entry.mediaId));
+  renderPlan();
+}
 
 function updateConfirmation() {
   const videos = videoEntries();
@@ -370,8 +447,8 @@ function renderPlan() {
       checkbox.setAttribute('aria-label', `Подтвердить переименование ${filename(entry.source)}`);
       checkbox.checked = state.confirmed.has(entry.mediaId);
       checkbox.addEventListener('change', () => {
-        if (checkbox.checked) state.confirmed.add(entry.mediaId);
-        else state.confirmed.delete(entry.mediaId);
+        if (checkbox.checked) { state.confirmed.add(entry.mediaId); state.excluded.delete(entry.mediaId); }
+        else { state.confirmed.delete(entry.mediaId); state.excluded.add(entry.mediaId); }
         updateConfirmation();
       });
       checkCell.append(checkbox);
@@ -493,11 +570,32 @@ $('scan-form').addEventListener('submit', action(async () => {
   const result = await api('/api/scan', { source: $('scan-source').value.trim(), kind: $('scan-kind').value });
   state.inventory = result.inventory || result;
   state.inventoryId = result.inventoryId || '';
+  state.groups = list(result.groups);
   renderIssues('scan-issues', state.inventory.issues);
   renderFiles();
   $('scan-summary').textContent = `${list(state.inventory.items).length} видеофайлов найдено`;
-  if (list(state.inventory.items).length) selectFile(state.inventory.items[0].id);
-  message('Сканирование завершено. Проверьте распознавание и подтвердите нужные совпадения.', 'success');
+  if (!list(state.inventory.items).length) { message('В этой папке нет видеофайлов.'); return; }
+  if (!state.settings.tmdbConfigured) {
+    selectFile(state.inventory.items[0].id);
+    message('Файлы найдены. Добавьте токен TMDB в настройках для автоматического поиска или выберите название вручную для всей группы.'); return;
+  }
+  state.preparing = true;
+  setBusy(1);
+  try {
+    for (let index = 0; index < state.groups.length; index++) {
+      const group = state.groups[index];
+      message(`Подбираю названия: ${index + 1} из ${state.groups.length} — ${group.title} (${group.itemIds.length} файлов)…`);
+      const match = await api('/api/prepare', {inventoryId:state.inventoryId, itemId:group.itemIds[0]});
+      state.matches[group.id] = match;
+      Object.assign(state.selections, match.selections);
+      Object.keys(match.selections).forEach(id => state.automatic.add(id));
+    }
+  } finally { state.preparing = false; setBusy(-1); renderFiles(); }
+  const unresolved = state.inventory.items.find(item => !state.selections[item.id]);
+  if (unresolved) selectFile(unresolved.id);
+  await createPlan();
+  const ready = Object.keys(state.selections).length;
+  message(`Подготовлено ${ready} из ${state.inventory.items.length} файлов. ${unresolved ? 'Проверьте оставшиеся совпадения. ' : ''}Файлы ещё не изменены.`, ready ? 'success' : '');
 }));
 
 $('scan-source').addEventListener('input', clearInventory);
@@ -505,26 +603,27 @@ $('scan-kind').addEventListener('change', clearInventory);
 
 $('search-form').addEventListener('submit', action(async () => {
   const result = await api('/api/search', {
-    query: $('search-query').value.trim(), kind: $('edit-kind').value, year: Number($('edit-year').value) || 0
+    query: $('search-query').value.trim(), kind: $('edit-kind').value, year: 0
   });
   renderCandidates(result.candidates);
-  message('Выберите результат поиска, затем проверьте и подтвердите карточку.');
+  message(matchScope() === 'group' ? 'Выберите сериал — он применится ко всем сериям этой группы.' : 'Выберите результат — он попадёт в предпросмотр.');
 }));
 
 $('manual-form').addEventListener('submit', action(async () => {
   const item = currentItem();
   if (!item) throw new Error('Сначала выберите файл.');
   const metadata = readEditor();
-  if (metadata.kind === 'tv' && metadata.provider === 'tmdb' && metadata.seasons && !metadata.seasons[String(metadata.season)]) {
-    const details = await api('/api/metadata', { kind: 'tv', id: String(metadata.id), seasons: [metadata.season] });
+  const seasons = matchingSeasons();
+  if (metadata.kind === 'tv' && metadata.provider === 'tmdb' && seasons.some(season => !metadata.seasons || !metadata.seasons[String(season)])) {
+    const details = await api('/api/metadata', { kind: 'tv', id: String(metadata.id), seasons });
     metadata.seasons = details.seasons;
   }
-  state.selections[item.id] = metadata;
-  state.draft = copy(metadata);
-  clearPlan();
-  renderFiles();
-  message(`Совпадение подтверждено: ${metadata.title}.`, 'success');
+  const count = await saveMatch(metadata);
+  await createPlan();
+  message(`Выбрано «${metadata.title}» для ${count} файлов. Проверьте предпросмотр.`, 'success');
 }));
+
+$('match-scope').addEventListener('change', updateScope);
 
 $('manual-form').querySelectorAll('input,select').forEach(el => {
   el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
@@ -534,18 +633,16 @@ $('manual-form').querySelectorAll('input,select').forEach(el => {
 });
 
 $('create-plan').addEventListener('click', action(async () => {
-  if (!state.settings.libraryRoot) { $('settings-panel').open = true; throw new Error('Сначала сохраните папку медиатеки Plex в настройках.'); }
-  clearPlan();
-  state.plan = await api('/api/plan', {
-    inventoryId: state.inventoryId, library: state.settings.libraryRoot, selections: state.selections
-  });
-  renderPlan();
-  message('Предпросмотр готов. Ничего не изменено. Отметьте операции для применения.');
+  await createPlan();
+  message('Предпросмотр готов. Проверьте пути и нажмите «Переименовать». Файлы ещё не изменены.');
 }));
 
 $('confirm-all').addEventListener('change', event => {
   state.confirmed.clear();
-  if (event.target.checked) videoEntries().forEach(entry => state.confirmed.add(entry.mediaId));
+  videoEntries().forEach(entry => {
+    if (event.target.checked) { state.confirmed.add(entry.mediaId); state.excluded.delete(entry.mediaId); }
+    else state.excluded.add(entry.mediaId);
+  });
   $('preview-list').querySelectorAll('input[type=checkbox]').forEach(el => { el.checked = state.confirmed.has(el.dataset.mediaId); });
   updateConfirmation();
 });

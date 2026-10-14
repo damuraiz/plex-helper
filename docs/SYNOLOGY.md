@@ -7,7 +7,7 @@ DSM 7.3.2-86009 Update 4**. Статический Go-сервер включа�
 
 ## Установка и вход
 
-1. Выберите `dist/plex-helper-x86_64-0.1.1-3.spk` в
+1. Выберите `dist/plex-helper-x86_64-0.2.0-1.spk` в
    **Package Center → Manual Install**. Контрольная сумма лежит рядом.
 2. Примите предупреждение DSM о стороннем пакете и подтвердите установку.
    Пакет не подписан Synology и работает от внутреннего пользователя пакета.
@@ -107,7 +107,7 @@ make spk
 
 ```sh
 SOURCE_DATE_EPOCH=1791936000 python3 scripts/build-spk.py --version 0.1.1-3
-sha256sum dist/plex-helper-x86_64-0.1.1-3.spk
+sha256sum dist/plex-helper-x86_64-0.2.0-1.spk
 ```
 
 На macOS используйте `shasum -a 256`. Фиксируются CGO_ENABLED=0, GOOS=linux,

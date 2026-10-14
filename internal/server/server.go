@@ -35,17 +35,18 @@ type attempts struct {
 	Since time.Time
 }
 type App struct {
-	Store       *Store
-	Engine      *organizer.Engine
-	Version     string
-	mu          sync.Mutex
-	sessions    map[string]session
-	attempts    map[string]attempts
-	inventories map[string]organizer.Inventory
-	plans       map[string]organizer.Plan
-	operation   sync.Mutex
-	dsm         *dsmAuthenticator
-	csrfKey     string
+	Store          *Store
+	Engine         *organizer.Engine
+	Version        string
+	mu             sync.Mutex
+	sessions       map[string]session
+	attempts       map[string]attempts
+	inventories    map[string]organizer.Inventory
+	plans          map[string]organizer.Plan
+	operation      sync.Mutex
+	dsm            *dsmAuthenticator
+	csrfKey        string
+	metadataClient func(Config) *TMDB
 }
 
 func New(dataDir, version string) (*App, error) {
@@ -66,6 +67,7 @@ func newApp(dataDir, version string, dsm bool) (*App, error) {
 		return nil, err
 	}
 	a := &App{Store: store, Engine: engine, Version: version, sessions: make(map[string]session), attempts: make(map[string]attempts), inventories: make(map[string]organizer.Inventory), plans: make(map[string]organizer.Plan), csrfKey: rand.Text()}
+	a.metadataClient = newTMDB
 	if dsm {
 		a.dsm = newDSMAuthenticator()
 	}
@@ -418,7 +420,9 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 		}
 		a.inventories[id] = inventory
 		a.mu.Unlock()
-		reply(w, 200, map[string]any{"inventoryId": id, "root": inventory.Root, "items": inventory.Items, "issues": inventory.Issues})
+		reply(w, 200, map[string]any{"inventoryId": id, "root": inventory.Root, "items": inventory.Items, "issues": inventory.Issues, "groups": matchGroups(inventory)})
+	case "/api/prepare", "/api/match":
+		a.matchRequest(w, r)
 	case "/api/search":
 		var input struct {
 			Query, Kind string
@@ -428,7 +432,7 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 			failure(w, 400, err)
 			return
 		}
-		candidates, err := newTMDB(a.Store.snapshot()).Search(r.Context(), input.Query, input.Kind, input.Year)
+		candidates, err := a.metadataClient(a.Store.snapshot()).Search(r.Context(), input.Query, input.Kind, input.Year)
 		if err != nil {
 			failure(w, 400, err)
 		} else {
@@ -443,7 +447,7 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 			failure(w, 400, err)
 			return
 		}
-		metadata, err := newTMDB(a.Store.snapshot()).Metadata(r.Context(), input.Kind, input.ID, input.Seasons)
+		metadata, err := a.metadataClient(a.Store.snapshot()).Metadata(r.Context(), input.Kind, input.ID, input.Seasons)
 		if err != nil {
 			failure(w, 400, err)
 		} else {
