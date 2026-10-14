@@ -22,6 +22,7 @@
 | Браузер | Вход → папки → scan → ручной movie/TV выбор → preview → выбор только movie → перенос movie+subtitle → журнал → undo; невыбранный TV файл остался на месте. Дополнительно реальный TMDB поиск/выбор проверен в браузере |
 | Интерфейс | Проверены modal folder browser, ошибка отсутствующего токена, истечение сессии, сохранённые настройки после reload; JS/CSP console без ошибок; width390 без горизонтального переполнения |
 | Linux бинарник | Builder проверил ELF64 little-endian x86-64 и отсутствие PT_INTERP; CGO0 / GOAMD64v1 / static build |
+| Мастер установки | Node.js проверяет JSONP `default` export, setup, минимальную длину пароля и getValues на коде из собранного SPK |
 | Пакет | Две полные сборки `.spk` побайтово равны. Проверены INFO, modes, paths, nested tgz, privilege/resource, UI и service hooks |
 | Linux CI | Полные `go test -race ./...`, воспроизводимая сборка и service tests прошли на Ubuntu24.04; готовый SPK сохранён как artifact |
 | Служба | Собранный локальный бинарник прошёл start/status/stop, повторный start, stale/foreign/reused PID refusal. Состояние не меняется при локальном запуске upgrade/reinstall/uninstall hooks |
@@ -58,5 +59,21 @@
 8. Измерить RAM/CPU на J4125/4GB. GOMEMLIMIT256MiB — мягкая цель Go, а не
    измеренное потребление памяти или гарантия максимального RSS.
 
-Установки/входа на пользовательский NAS в этом процессе не было. Проверка
-DSM install/update/reboot остаётся отдельным этапом, а не заявляется завершённой.
+## Диагностика установщика DSM 14 октября 2026
+
+На реальном NAS через браузер воспроизведена ошибка версии 0.1.0-1:
+после чтения SPK загрузчик `DialogVueBundle.js` выбрасывает `Cannot read
+properties of undefined (reading 'name')`, затем мастер показывает
+сообщение об отсутствии тома. Сам DSM показывает исправный Том 1,
+10,8 ТБ, свободно 4,9 ТБ. Никакие тома или данные не изменялись.
+
+Мастер передавал объект компонента напрямую в JSONP callback. Официальный
+[пример Synology](https://github.com/SynologyOpenSource/ExamplePackages/blob/main/ExamplePackage/WIZARD_UIFILES/src/remove-entry.js)
+использует `export default`, а его webpack config экспортирует namespace
+модуля через JSONP. В версии 0.1.0-2 добавлено поле `default` и проверка
+этого контракта; локальные package/service/reproducibility tests прошли.
+Повторная загрузка 0.1.0-2 на этом NAS подтвердила исчезновение сообщения
+об отсутствии тома: мастер отображает `Plex Helper login` и поле пароля,
+кнопка «Далее» заблокирована при пустом пароле. Новых ошибок загрузчика
+после исправления нет. Установка, запуск и DSM ACL ещё не проверены;
+создание пароля передано пользователю. Установку приложения ещё не запускали.

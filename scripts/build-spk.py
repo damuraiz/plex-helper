@@ -53,18 +53,21 @@ def png(size):
 def wizard():
     # DSM 7.2.2 documents a JSONP callback returning a Vue component. A native
     # render function needs no transpiler, npm install, or third-party assets.
+    # The JSONP loader consumes the webpack module namespace: module.default,
+    # not the component object directly (see Synology's export-default example).
     render = r"""SYNO.SDS.PkgManApp.Custom.JsonpLoader.load({
-      name:'plex_helper_password',render:{
+      default:{name:'plex_helper_password',render:{
         props:SYNO.SDS.PkgManApp.Custom.useHook.props,
         setup:function(props){
           var password=Vue.ref('');
           var hook=SYNO.SDS.PkgManApp.Custom.useHook(props);
-          Vue.watchEffect(function(){
-            var owner=props.getOwner();
+          var checkState=function(owner){
+            owner=owner||props.getOwner();
             hook.checkState(owner);
             owner.getButton('next').setDisabled(password.value.length<12);
-          });
-          return {password:password,getNext:hook.getNext,checkState:hook.checkState,
+          };
+          Vue.watchEffect(function(){checkState();});
+          return {password:password,getNext:hook.getNext,checkState:checkState,
             headline:'Plex Helper login',
             getValues:function(){return [{wizard_admin_password:password.value}];}};
         },
@@ -76,14 +79,14 @@ def wizard():
             ])])
           ]);
         }
-      }
+      }}
     });"""
     return (json.dumps([{"custom_render_fn": render, "custom_render_name": "plex_helper_password"}], indent=2) + "\n").encode()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="0.1.0-1")
+    parser.add_argument("--version", default="0.1.0-2")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--go", default=os.environ.get("GO", "go"))
     parser.add_argument("--binary", type=Path, help="Use an already built static linux/amd64 binary (does not run Go).")

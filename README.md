@@ -37,12 +37,12 @@ make package-test
 make spk
 ```
 
-Машина сборки: Go **1.25.14**, Python **3.12**, make. На macOS можно передать
+Машина сборки: Go **1.25.14**, Python **3.12**, make; для проверки мастера нужен Node.js 18+ (только на машине разработки). На macOS можно передать
 `GO=/opt/homebrew/bin/go`; Python используется только упаковщиком, а не на NAS.
 Builder не скачивает toolchain или зависимости. Для побайтовой сверки между
 машинами нужны одинаковые исходники, Go и Python/zlib.
 
-Результат: `dist/plex-helper-x86_64-0.1.0-1.spk` и `.spk.sha256`.
+Результат: `dist/plex-helper-x86_64-0.1.0-2.spk` и `.spk.sha256`.
 В DSM: **Package Center → Manual Install**. Доступ к тестовым папкам выдается
 внутреннему пользователю системы **plex-helper** средствами DSM.
 

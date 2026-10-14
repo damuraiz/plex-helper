@@ -34,6 +34,7 @@ def contents(archive):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go", default=os.environ.get("GO", "go"))
+    parser.add_argument("--node", default=os.environ.get("NODE", "node"))
     args = parser.parse_args()
     environment = os.environ.copy()
     environment.update(CGO_ENABLED="0", GOTOOLCHAIN="local", GOWORK="off")
@@ -59,7 +60,9 @@ def main():
         assert config[".url"]["com.damuraiz.plexhelper"]["url"] == "3rdparty/plex-helper/launch.html"
         assert json.loads(files["conf/resource"][0])["port-config"]["protocol-file"] in payload
         assert 'dst.ports="8650/tcp"' in payload["port_conf/plex-helper.sc"][0].decode()
-        assert len(json.loads(files["WIZARD_UIFILES/install_uifile"][0])) == 1
+        wizard = json.loads(files["WIZARD_UIFILES/install_uifile"][0])
+        assert len(wizard) == 1
+        run([args.node, str(ROOT / "scripts/test-wizard.cjs")], input=json.dumps(wizard).encode())
         for name, (data, mode) in files.items():
             if name.startswith("scripts/"):
                 assert mode == 0o755
