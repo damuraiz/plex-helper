@@ -3,8 +3,9 @@
 // No client persistence of passwords or TMDB credentials. Paths and metadata
 // are inserted as text; files are changed only by the explicitly checked plan.
 const $ = id => document.getElementById(id);
+const appBase = new URL('.', location.href).pathname;
 const state = {
-  csrf: '', setup: false, settings: {}, inventory: null, inventoryId: '',
+  csrf: '', setup: false, authMode: 'local', dsmToken: '', settings: {}, inventory: null, inventoryId: '',
   selections: Object.create(null), focusId: '', draft: {}, plan: null,
   confirmed: new Set(), busy: 0, folder: null, folderTarget: ''
 };
@@ -58,6 +59,7 @@ async function api(path, body) {
   setBusy(1);
   try {
     const headers = { Accept: 'application/json' };
+    if (state.dsmToken) headers['X-Syno-Token'] = state.dsmToken;
     const options = { credentials: 'same-origin', headers, cache: 'no-store' };
     if (body !== undefined) {
       options.method = 'POST';
@@ -66,7 +68,7 @@ async function api(path, body) {
       options.body = JSON.stringify(body);
     }
     let response;
-    try { response = await fetch(path, options); }
+    try { response = await fetch(appBase + path.replace(/^\//, ''), options); }
     catch (_) { throw new Error('Нет связи с NAS. Проверьте подключение и состояние пакета.'); }
     let result;
     try { result = await response.json(); }
@@ -74,7 +76,7 @@ async function api(path, body) {
     if (!response.ok) {
       if (response.status === 401 && path !== '/api/login' && path !== '/api/setup') {
         showAuth(false);
-        message('Сессия завершилась. Войдите снова.', '', 'auth-status');
+        message(state.authMode === 'dsm' ? 'Сессия DSM завершилась или доступ запрещён. Войдите в DSM учётной записью администратора и откройте приложение заново.' : 'Сессия завершилась. Войдите снова.', '', 'auth-status');
       }
       const error = new Error(typeof result.error === 'string' ? result.error : `Ошибка сервера (${response.status}).`);
       error.result = result;
@@ -100,24 +102,48 @@ function showAuth(setup) {
   state.folder = null;
   $('app-view').hidden = true;
   $('auth-view').hidden = false;
+  $('auth-form').hidden = state.authMode === 'dsm';
+  $('dsm-login').hidden = state.authMode !== 'dsm';
   $('setup-token-label').hidden = !setup;
   $('setup-token').required = setup;
   $('auth-password').autocomplete = setup ? 'new-password' : 'current-password';
   $('auth-password').minLength = setup ? 12 : 1;
   $('auth-submit').textContent = setup ? 'Настроить приложение' : 'Войти';
-  $('auth-description').textContent = setup
+  $('auth-description').textContent = state.authMode === 'dsm'
+    ? 'Откройте приложение из DSM после входа учётной записью администратора NAS. Отдельный пароль Plex Helper не нужен.'
+    : setup
     ? 'Введите код из файла setup-token в папке состояния пакета и создайте пароль администратора (от 12 символов).'
     : 'Войдите, чтобы работать с медиатекой на NAS.';
   clearInventory();
 }
 
 async function loadState() {
+  if (appBase === '/webman/3rdparty/plex-helper/' && !state.dsmToken) {
+    state.authMode = 'dsm';
+    // Read the current DSM session's CSRF token from DSM's own endpoint.
+    // Keep it only in page memory; never put it in URLs or browser storage.
+    const response = await fetch('/webman/login.cgi', {credentials:'same-origin', cache:'no-store'});
+    if (!response.ok) throw new Error('Не удалось проверить текущий вход DSM. Откройте приложение из DSM заново.');
+    const login = await response.json();
+    if (login.success && typeof login.SynoToken === 'string') state.dsmToken = login.SynoToken;
+  }
   const result = await api('/api/state');
-  if (!result.authenticated) { showAuth(Boolean(result.setupRequired)); return; }
+  state.authMode = result.authMode || 'local';
+  document.body.dataset.authError = result.authError || '';
+  if (!result.authenticated) {
+    showAuth(Boolean(result.setupRequired));
+    if (result.authError === 'helper_failed') {
+      message('Не удалось проверить вход DSM. Проверьте журнал пакета.', 'error', 'auth-status');
+    }
+    return;
+  }
   state.csrf = result.csrf || state.csrf;
   state.settings = result.settings || {};
   $('auth-view').hidden = true;
   $('app-view').hidden = false;
+  $('logout').hidden = state.authMode === 'dsm';
+  $('dsm-user').hidden = state.authMode !== 'dsm';
+  $('dsm-user').textContent = result.user ? `DSM: ${result.user}` : '';
   $('version').textContent = result.version ? `v${result.version}` : 'Synology NAS';
   $('settings-source').value = state.settings.sourceRoot || '';
   $('settings-library').value = state.settings.libraryRoot || '';

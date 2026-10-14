@@ -31,6 +31,15 @@ type Store struct {
 }
 
 func OpenStore(dir string) (*Store, error) {
+	return openStore(dir, true)
+}
+
+// OpenDSMStore never creates an application password or setup credential.
+func OpenDSMStore(dir string) (*Store, error) {
+	return openStore(dir, false)
+}
+
+func openStore(dir string, localAuth bool) (*Store, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -60,7 +69,16 @@ func OpenStore(dir string) (*Store, error) {
 	if s.config.Language == "" {
 		s.config.Language = "ru-RU"
 	}
-	if s.config.PasswordHash == "" {
+	if !localAuth && os.IsNotExist(err) {
+		data, e := json.MarshalIndent(s.config, "", "  ")
+		if e != nil {
+			return nil, e
+		}
+		if e = atomicWrite(path, data); e != nil {
+			return nil, e
+		}
+	}
+	if localAuth && s.config.PasswordHash == "" {
 		path = filepath.Join(dir, "setup-token")
 		if info, e := os.Lstat(path); e == nil && info.Mode()&os.ModeSymlink != 0 {
 			return nil, errors.New("setup token must not be a symbolic link")

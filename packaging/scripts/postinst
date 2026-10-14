@@ -4,7 +4,5 @@ umask 077
 data=${SYNOPKG_PKGVAR:-/var/packages/plex-helper/var}
 target=${SYNOPKG_PKGDEST:-/var/packages/plex-helper/target}
 mkdir -p "$data"
-if [ "${SYNOPKG_PKG_STATUS:-INSTALL}" = INSTALL ] && [ ! -f "$data/config.json" ] && [ -n "${wizard_admin_password:-}" ]; then
-    printf '%s' "$wizard_admin_password" | "$target/bin/plex-helper" --data "$data" --init-password
-fi
+"$target/bin/plex-helper" --data "$data" --init-dsm
 unset wizard_admin_password

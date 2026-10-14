@@ -1,8 +1,4 @@
 #!/bin/sh
 set -eu
-if [ "${SYNOPKG_PKG_STATUS:-INSTALL}" = INSTALL ] && [ -n "${wizard_admin_password:-}" ]; then
-    if [ "${#wizard_admin_password}" -lt 12 ]; then
-        printf '%s\n' 'Plex Helper password must contain at least 12 characters.' >&2
-        exit 1
-    fi
-fi
+# Authentication is provided by the current DSM administrator session.
+exit 0

@@ -34,7 +34,6 @@ def contents(archive):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go", default=os.environ.get("GO", "go"))
-    parser.add_argument("--node", default=os.environ.get("NODE", "node"))
     args = parser.parse_args()
     environment = os.environ.copy()
     environment.update(CGO_ENABLED="0", GOTOOLCHAIN="local", GOWORK="off")
@@ -46,7 +45,7 @@ def main():
         packages = [next(p.glob("*.spk")) for p in outputs]
         assert packages[0].read_bytes() == packages[1].read_bytes(), "SPK builds differ"
         files = contents(packages[0].read_bytes())
-        required = {"INFO", "package.tgz", "PACKAGE_ICON.PNG", "PACKAGE_ICON_256.PNG", "conf/privilege", "conf/resource", "scripts/start-stop-status", "scripts/preinst", "scripts/postinst", "scripts/preupgrade", "scripts/postupgrade", "scripts/preuninst", "scripts/postuninst", "WIZARD_UIFILES/install_uifile"}
+        required = {"INFO", "package.tgz", "PACKAGE_ICON.PNG", "PACKAGE_ICON_256.PNG", "conf/privilege", "conf/resource", "scripts/start-stop-status", "scripts/preinst", "scripts/postinst", "scripts/preupgrade", "scripts/postupgrade", "scripts/preuninst", "scripts/postuninst"}
         assert required <= files.keys()
         assert json.loads(files["conf/privilege"][0])["defaults"]["run-as"] == "package"
         assert json.loads(files["conf/privilege"][0])["username"] == "plex-helper"
@@ -57,12 +56,15 @@ def main():
         payload = contents(files["package.tgz"][0])
         assert payload["bin/plex-helper"][1] == 0o755
         config = json.loads(payload["ui/config"][0])
-        assert config[".url"]["com.damuraiz.plexhelper"]["url"] == "3rdparty/plex-helper/launch.html"
-        assert json.loads(files["conf/resource"][0])["port-config"]["protocol-file"] in payload
-        assert 'dst.ports="8650/tcp"' in payload["port_conf/plex-helper.sc"][0].decode()
-        wizard = json.loads(files["WIZARD_UIFILES/install_uifile"][0])
-        assert len(wizard) == 1
-        run([args.node, str(ROOT / "scripts/test-wizard.cjs")], input=json.dumps(wizard).encode())
+        assert config[".url"]["com.damuraiz.plexhelper"]["url"] == "webman/3rdparty/plex-helper/"
+        web_config = json.loads(files["conf/resource"][0])["web-config"]["nginx-static-config"]["enable"]
+        assert web_config == [{"type": "dsm", "relpath": "nginx/plex-helper.conf"}]
+        nginx = payload[web_config[0]["relpath"]][0].decode()
+        assert "proxy_pass http://127.0.0.1:8650/;" in nginx
+        assert "X-Plex-Helper-Client-IP $remote_addr;" in nginx
+        assert 'instuninst_restart_services="nginx.service"' in info
+        assert not any(name.startswith("WIZARD_UIFILES/") for name in files)
+        assert "adminport" not in info and "port-config" not in files["conf/resource"][0].decode()
         for name, (data, mode) in files.items():
             if name.startswith("scripts/"):
                 assert mode == 0o755
@@ -89,7 +91,8 @@ def main():
         hook("postinst")
         assert (data_dir / "config.json").exists()
         config_before = (data_dir / "config.json").read_bytes()
-        assert b"package-test-password-12345" not in config_before
+        assert b"passwordHash" not in config_before and b"passwordSalt" not in config_before
+        assert not (data_dir / "setup-token").exists()
         # Ask the OS for a free loopback port, then release it before the service.
         import socket
         with socket.socket() as reservation:
@@ -108,7 +111,7 @@ def main():
             (data_dir / "service.birth").write_bytes(actual_birth)
             hook("start-stop-status", "start")
             assert (data_dir / "service.pid").read_text() == first_pid, "Duplicate daemon"
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as response:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as response:
                 assert response.status == 200
             if Path("/proc").is_dir():
                 # Initial plaintext wizard password must not reach server env.
@@ -144,11 +147,11 @@ def main():
             hook("postinst")
             assert (data_dir / "config.json").read_bytes() == config_before, "Reinstall resets credentials"
             hook_environment.update(SYNOPKG_PKG_STATUS="INSTALL", wizard_admin_password="short")
-            hook("preinst", expected=1)
+            hook("preinst")
         finally:
             hook("start-stop-status", "stop")
         print("PASS: deterministic SPK, static ELF, DSM metadata, real service lifecycle, stale/foreign PID protection, upgrade/uninstall-hook retention")
-        print("NOT VERIFIED: Package Center installation, DSM wizard/ACL/desktop integration, NAS boot or DSM upgrade behavior")
+        print("NOT VERIFIED: Package Center installation, real DSM session helper/group lookup/nginx/ACL integration, NAS boot or DSM upgrade behavior")
 
 
 if __name__ == "__main__":

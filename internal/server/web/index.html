@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>Plex Helper · Медиатека</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
 </head>
 <body>
   <div id="auth-view" class="auth-wrap" hidden>
@@ -20,14 +20,15 @@
         <label>Пароль администратора<input id="auth-password" type="password" autocomplete="current-password" required></label>
         <button id="auth-submit" class="primary" type="submit">Войти</button>
       </form>
+      <a id="dsm-login" href="/" hidden>Открыть DSM</a>
       <p id="auth-status" role="status" class="status"></p>
     </section>
   </div>
 
   <div id="app-view" hidden>
     <header class="app-header">
-      <a class="brand" href="/" aria-label="Plex Helper, главная"><span class="brand-icon small" aria-hidden="true">P<span>H</span></span><span>Plex Helper<small>Медиатека на вашем NAS</small></span></a>
-      <div class="header-actions"><span id="version" class="badge"></span><button id="open-settings" class="quiet">Настройки</button><button id="logout" class="quiet">Выйти</button></div>
+      <a class="brand" href="./" aria-label="Plex Helper, главная"><span class="brand-icon small" aria-hidden="true">P<span>H</span></span><span>Plex Helper<small>Медиатека на вашем NAS</small></span></a>
+      <div class="header-actions"><span id="dsm-user" class="badge" hidden></span><span id="version" class="badge"></span><button id="open-settings" class="quiet">Настройки</button><button id="logout" class="quiet">Выйти</button></div>
     </header>
     <main>
       <div class="page-heading"><div><p class="eyebrow">ПОРЯДОК В МЕДИАТЕКЕ</p><h1>Готово к просмотру</h1><p class="muted">Распознайте фильмы и серии, проверьте имена и подтвердите изменения.</p></div><span class="local-pill"><span aria-hidden="true"></span>Файлы остаются на NAS</span></div>
@@ -98,7 +99,7 @@
         <p class="help">Отмена доступна, пока перенесённые файлы не изменились и исходные пути свободны.</p>
         <div id="history-list"></div><p id="history-empty" class="empty">Подтверждённые операции появятся здесь.</p>
       </section>
-      <details class="panel credits"><summary>О приложении и метаданных</summary><p>Plex Helper — самостоятельное открытое приложение, MIT.</p><a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer"><img src="/tmdb.svg" width="100" height="13" alt="TMDB"></a><p class="help">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></details>
+      <details class="panel credits"><summary>О приложении и метаданных</summary><p>Plex Helper — самостоятельное открытое приложение, MIT.</p><a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer"><img src="tmdb.svg" width="100" height="13" alt="TMDB"></a><p class="help">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></details>
       <footer class="app-footer">Plex Helper · Открытое приложение для вашей медиатеки<span>Проверяйте предпросмотр перед применением</span></footer>
     </main>
   </div>

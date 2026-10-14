@@ -50,43 +50,9 @@ def png(size):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
 
 
-def wizard():
-    # DSM 7.2.2 documents a JSONP callback returning a Vue component. A native
-    # render function needs no transpiler, npm install, or third-party assets.
-    # The JSONP loader consumes the webpack module namespace: module.default,
-    # not the component object directly (see Synology's export-default example).
-    render = r"""SYNO.SDS.PkgManApp.Custom.JsonpLoader.load({
-      default:{name:'plex_helper_password',render:{
-        props:SYNO.SDS.PkgManApp.Custom.useHook.props,
-        setup:function(props){
-          var password=Vue.ref('');
-          var hook=SYNO.SDS.PkgManApp.Custom.useHook(props);
-          var checkState=function(owner){
-            owner=owner||props.getOwner();
-            hook.checkState(owner);
-            owner.getButton('next').setDisabled(password.value.length<12);
-          };
-          Vue.watchEffect(function(){checkState();});
-          return {password:password,getNext:hook.getNext,checkState:checkState,
-            headline:'Plex Helper login',
-            getValues:function(){return [{wizard_admin_password:password.value}];}};
-        },
-        render:function(h){var self=this;
-          return h('pkg-center-step-content',[
-            h('p','Set a separate application password (at least 12 characters). Login: admin. Your DSM password is not used.'),
-            h('v-form',[h('v-form-item',{props:{label:'Application password'}},[
-              h('v-input',{props:{type:'password',value:self.password},on:{input:function(v){self.password=v;}}})
-            ])])
-          ]);
-        }
-      }}
-    });"""
-    return (json.dumps([{"custom_render_fn": render, "custom_render_name": "plex_helper_password"}], indent=2) + "\n").encode()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="0.1.0-2")
+    parser.add_argument("--version", default="0.1.1-3")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--go", default=os.environ.get("GO", "go"))
     parser.add_argument("--binary", type=Path, help="Use an already built static linux/amd64 binary (does not run Go).")
@@ -125,7 +91,7 @@ def main():
             payload[f"ui/images/plex-helper_{size}.png"] = (png(size), 0o644)
         package_tgz = archive(payload, epoch, compress=True)
         info = (ROOT / "packaging/INFO.in").read_text().replace("@VERSION@", args.version).replace("@CHECKSUM@", hashlib.md5(package_tgz).hexdigest()).encode()
-        outer = {"INFO": (info, 0o644), "package.tgz": (package_tgz, 0o644), "PACKAGE_ICON.PNG": (png(64), 0o644), "PACKAGE_ICON_256.PNG": (png(256), 0o644), "WIZARD_UIFILES/install_uifile": (wizard(), 0o644)}
+        outer = {"INFO": (info, 0o644), "package.tgz": (package_tgz, 0o644), "PACKAGE_ICON.PNG": (png(64), 0o644), "PACKAGE_ICON_256.PNG": (png(256), 0o644)}
         for folder in ("conf", "scripts"):
             for path in sorted((ROOT / "packaging" / folder).rglob("*")):
                 if path.is_file():

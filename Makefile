@@ -1,6 +1,6 @@
 GO ?= go
 PYTHON ?= python3
-VERSION ?= 0.1.0-2
+VERSION ?= 0.1.1-3
 export GOTOOLCHAIN := local
 export SOURCE_DATE_EPOCH ?= 1791936000
 

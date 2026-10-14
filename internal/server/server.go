@@ -25,8 +25,10 @@ import (
 var assets embed.FS
 
 type session struct {
-	CSRF    string
-	Expires time.Time
+	CSRF      string
+	Expires   time.Time
+	User      string
+	AuthError string
 }
 type attempts struct {
 	Count int
@@ -42,10 +44,20 @@ type App struct {
 	inventories map[string]organizer.Inventory
 	plans       map[string]organizer.Plan
 	operation   sync.Mutex
+	dsm         *dsmAuthenticator
+	csrfKey     string
 }
 
 func New(dataDir, version string) (*App, error) {
-	store, err := OpenStore(dataDir)
+	return newApp(dataDir, version, false)
+}
+
+func NewDSM(dataDir, version string) (*App, error) {
+	return newApp(dataDir, version, true)
+}
+
+func newApp(dataDir, version string, dsm bool) (*App, error) {
+	store, err := openStore(dataDir, !dsm)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +65,11 @@ func New(dataDir, version string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{Store: store, Engine: engine, Version: version, sessions: make(map[string]session), attempts: make(map[string]attempts), inventories: make(map[string]organizer.Inventory), plans: make(map[string]organizer.Plan)}, nil
+	a := &App{Store: store, Engine: engine, Version: version, sessions: make(map[string]session), attempts: make(map[string]attempts), inventories: make(map[string]organizer.Inventory), plans: make(map[string]organizer.Plan), csrfKey: rand.Text()}
+	if dsm {
+		a.dsm = newDSMAuthenticator()
+	}
+	return a, nil
 }
 
 func reply(w http.ResponseWriter, status int, data any) {
@@ -82,6 +98,9 @@ func readJSON(w http.ResponseWriter, r *http.Request, out any) error {
 }
 
 func (a *App) currentSession(r *http.Request) (session, bool) {
+	if a.dsm != nil {
+		return a.dsmSession(r)
+	}
 	cookie, err := r.Cookie("plex_helper_session")
 	if err != nil {
 		return session{}, false
@@ -164,9 +183,15 @@ func (a *App) Handler() http.Handler {
 			return
 		}
 		// Reject cross-origin writes even before login. DNS rebinding cannot supply this origin.
-		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host && origin != "https://"+r.Host {
-			failure(w, 403, errors.New("cross-origin request rejected"))
-			return
+		if origin := r.Header.Get("Origin"); origin != "" {
+			allowed := origin == "http://"+r.Host || origin == "https://"+r.Host
+			if a.dsm != nil {
+				allowed = origin == r.Header.Get("X-Plex-Helper-Protocol")+"://"+r.Host
+			}
+			if !allowed {
+				failure(w, 403, errors.New("cross-origin request rejected"))
+				return
+			}
 		}
 		if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
 			failure(w, 403, errors.New("cross-site request rejected"))
@@ -177,6 +202,10 @@ func (a *App) Handler() http.Handler {
 			return
 		}
 		if (r.URL.Path == "/api/login" || r.URL.Path == "/api/setup") && r.Method == "POST" {
+			if a.dsm != nil {
+				failure(w, 404, errors.New("вход выполняется через DSM"))
+				return
+			}
 			a.authenticate(w, r)
 			return
 		}
@@ -212,8 +241,15 @@ func (a *App) Handler() http.Handler {
 func (a *App) state(w http.ResponseWriter, r *http.Request) {
 	c := a.Store.snapshot()
 	s, ok := a.currentSession(r)
-	result := map[string]any{"authenticated": ok, "setupRequired": c.PasswordHash == "", "version": a.Version}
+	result := map[string]any{"authenticated": ok, "setupRequired": a.dsm == nil && c.PasswordHash == "", "version": a.Version, "authMode": "local"}
+	if a.dsm != nil {
+		result["authMode"] = "dsm"
+		if !ok {
+			result["authError"] = s.AuthError
+		}
+	}
 	if ok {
+		result["user"] = s.User
 		result["csrf"] = s.CSRF
 		result["settings"] = map[string]any{"sourceRoot": c.SourceRoot, "libraryRoot": c.LibraryRoot, "language": c.Language, "tmdbConfigured": c.TMDBToken != ""}
 	}
@@ -295,6 +331,10 @@ func (a *App) browse(w http.ResponseWriter, r *http.Request) {
 func (a *App) post(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/logout":
+		if a.dsm != nil {
+			failure(w, 409, errors.New("для завершения сессии выйдите из DSM"))
+			return
+		}
 		cookie, _ := r.Cookie("plex_helper_session")
 		a.mu.Lock()
 		if cookie != nil {

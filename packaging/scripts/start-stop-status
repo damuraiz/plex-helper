@@ -64,18 +64,12 @@ start_service() {
     is_running && return 0
     [ -x "$binary" ] || { printf '%s\n' 'Missing server executable.' >&2; return 1; }
     rm -f "$pidfile" "$birthfile"
-    listen=:8650
+    listen=127.0.0.1:8650
     if [ -f "$data/service-listen" ]; then
         IFS= read -r listen < "$data/service-listen"
         [ -n "$listen" ] || { printf '%s\n' 'Empty service-listen.' >&2; return 1; }
     fi
-    set -- --listen "$listen" --data "$data"
-    if [ -f "$data/service-tls-cert" ] || [ -f "$data/service-tls-key" ]; then
-        IFS= read -r cert < "$data/service-tls-cert"
-        IFS= read -r key < "$data/service-tls-key"
-        [ -r "$cert" ] && [ -r "$key" ] || { printf '%s\n' 'TLS certificate/key unreadable.' >&2; return 1; }
-        set -- "$@" --tls-cert "$cert" --tls-key "$key"
-    fi
+    set -- --listen "$listen" --data "$data" --auth dsm
     if [ -f "$logfile" ] && [ "$(wc -c < "$logfile")" -gt 1048576 ]; then
         mv -f "$logfile" "$logfile.previous"
     fi
