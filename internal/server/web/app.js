@@ -7,7 +7,7 @@ const appBase = new URL('.', location.href).pathname;
 const state = {
   csrf: '', setup: false, authMode: 'local', dsmToken: '', settings: {}, inventory: null, inventoryId: '',
   selections: Object.create(null), focusId: '', draft: {}, plan: null,
-  confirmed: new Set(), excluded: new Set(), busy: 0, folder: null, folderTarget: '', groups: [], matches: {}, automatic: new Set(), preparing: false
+  confirmed: new Set(), excluded: new Set(), busy: 0, folder: null, folderTarget: '', groups: [], matches: {}, automatic: new Set(), preparing: false, operationActive: false, pollTimer: null, journalKey: ''
 };
 const kindLabel = kind => kind === 'tv' ? 'Сериал' : 'Фильм';
 const filename = path => String(path || '').split('/').pop();
@@ -47,20 +47,31 @@ function setBusy(delta) {
 }
 
 function syncButtons() {
+  $('stop-operation').disabled = !state.operationActive;
   if (state.busy || state.preparing) return;
   $('create-plan').disabled = !state.inventory || !Object.keys(state.selections).length;
   $('apply-plan').disabled = !state.plan || !state.confirmed.size;
   $('confirm-all').disabled = !state.plan || !videoEntries().length;
   $('folder-select').disabled = !state.folder;
   $('folder-parent').disabled = !state.folder || !state.folder.parent || state.folder.parent === state.folder.path;
+  if (state.operationActive) {
+    $('prepare-button').disabled = true;
+    $('create-plan').disabled = true;
+    $('apply-plan').disabled = true;
+    $('settings-form').querySelector('button[type=submit]').disabled = true;
+  } else {
+    $('prepare-button').disabled = false;
+    $('settings-form').querySelector('button[type=submit]').disabled = false;
+  }
 }
 
-async function api(path, body) {
-  setBusy(1);
+async function api(path, body, quiet = false) {
+  if (!quiet) setBusy(1);
   try {
     const headers = { Accept: 'application/json' };
     if (state.dsmToken) headers['X-Syno-Token'] = state.dsmToken;
     const options = { credentials: 'same-origin', headers, cache: 'no-store' };
+    if (body === undefined) options.signal = AbortSignal.timeout(15000);
     if (body !== undefined) {
       options.method = 'POST';
       headers['Content-Type'] = 'application/json';
@@ -83,7 +94,7 @@ async function api(path, body) {
       throw error;
     }
     return result;
-  } finally { setBusy(-1); }
+  } finally { if (!quiet) setBusy(-1); }
 }
 
 function action(handler, target = 'global-status') {
@@ -96,6 +107,7 @@ function action(handler, target = 'global-status') {
 }
 
 function showAuth(setup) {
+  clearTimeout(state.pollTimer);
   state.csrf = '';
   state.setup = setup;
   if ($('folder-dialog').open) $('folder-dialog').close();
@@ -149,13 +161,16 @@ async function loadState() {
   $('settings-library').value = state.settings.libraryRoot || '';
   $('scan-source').value = state.settings.sourceRoot || '';
   $('settings-language').value = state.settings.language || 'ru-RU';
+  $('settings-naming-language').value = state.settings.namingLanguage || 'en-US';
   $('settings-token').value = '';
   $('clear-token').checked = false;
   $('token-status').textContent = state.settings.tmdbConfigured
     ? 'Токен TMDB сохранён. Оставьте поле пустым, чтобы сохранить его.'
     : 'Токен TMDB не настроен. Ручное распознавание доступно без него.';
   if (!state.settings.sourceRoot || !state.settings.libraryRoot) $('settings-panel').open = true;
-  await refreshJournals();
+  try { await refreshJournals(); }
+  catch (error) { if ($('auth-view').hidden) message(`Не удалось загрузить журнал: ${error.message}`, 'error'); }
+  if ($('auth-view').hidden) pollJournals();
 }
 
 function clearPlan() {
@@ -308,6 +323,7 @@ function selectFile(id) {
 
 function fillEditor(metadata) {
   $('edit-title').value = metadata.title || '';
+  $('edit-naming-title').value = metadata.naming_title || metadata.title || '';
   $('edit-kind').value = metadata.kind === 'tv' ? 'tv' : 'movie';
   $('edit-year').value = metadata.year || '';
   $('edit-season').value = metadata.season !== undefined && metadata.season !== null ? metadata.season : '';
@@ -323,10 +339,11 @@ function updateEpisodeFields() { $('episode-fields').hidden = $('edit-kind').val
 function readEditor() {
   const result = {
     ...copy(state.draft), kind: $('edit-kind').value, title: $('edit-title').value.trim(),
+    naming_title: $('edit-naming-title').value.trim(),
     year: Number($('edit-year').value) || 0,
     provider: $('edit-provider').value, id: $('edit-id').value.trim()
   };
-  if (!result.title) throw new Error('Укажите название фильма или сериала.');
+  if (!result.title || !result.naming_title) throw new Error('Укажите название фильма или сериала и название для файлов.');
   if (Boolean(result.provider) !== Boolean(result.id)) throw new Error('Укажите и провайдер, и ID, либо оставьте оба поля пустыми.');
   if (result.kind !== state.draft.kind || result.provider !== state.draft.provider || result.id !== state.draft.id) {
     delete result.seasons;
@@ -463,36 +480,86 @@ function renderPlan() {
 const journalStatus = {
   complete: 'Завершено', completed: 'Завершено', applied: 'Применено', partial: 'Частично выполнено', failed: 'Ошибка',
   undone: 'Отменено', undo_partial: 'Отменено частично', applying: 'Применяется', undoing: 'Отменяется',
-  pending: 'Ожидает', error: 'Ошибка', interrupted: 'Прервано', 'needs-attention': 'Требует внимания'
+  pending: 'Требует проверки', planned: 'Не начато', moved: 'Переименовано', restored: 'Возвращено', undo_pending: 'Требует проверки', stopped: 'Остановлено', error: 'Ошибка', interrupted: 'Прервано', 'needs-attention': 'Требует внимания'
 };
 
+function renderProgress(progress) {
+  state.operationActive = Boolean(progress && progress.active);
+  $('operation-panel').hidden = !state.operationActive;
+  if (state.operationActive) {
+    $('operation-heading').textContent = progress.kind === 'undo' ? 'Идёт отмена' : 'Идёт переименование';
+    const percent = progress.total ? ` · ${Math.min(100, Math.round(100 * progress.bytes / progress.total))}% текущей проверки` : '';
+    $('operation-summary').textContent = `${progress.phase || 'Обработка'} · файл ${progress.fileIndex || 1} из ${progress.fileCount} · выполнено ${progress.completed || 0}${percent}${progress.stopRequested ? ' · Остановка запрошена' : ''}`;
+    $('operation-path').textContent = progress.path || '';
+    if (progress.total) $('operation-progress').value = Math.min(100, 100 * progress.bytes / progress.total);
+    else $('operation-progress').removeAttribute('value');
+  }
+  syncButtons();
+  if (progress && progress.stopRequested) $('stop-operation').disabled = true;
+}
+
+function pollJournals() {
+  clearTimeout(state.pollTimer);
+  state.pollTimer = setTimeout(async () => {
+    if (!$('auth-view').hidden) return;
+    try { await refreshJournals(); }
+    catch (error) { message(`Не удалось обновить журнал: ${error.message}`, 'error'); }
+    if ($('auth-view').hidden) pollJournals();
+  }, state.operationActive ? 1500 : state.busy ? 500 : 5000);
+}
+
+$('stop-operation').addEventListener('click', async () => {
+  if (!state.operationActive) return;
+  $('stop-operation').disabled = true;
+  try {
+    await api('/api/stop', {}, true);
+    message('Остановка запрошена. Уже выполненные переименования останутся в журнале.');
+    await refreshJournals();
+  } catch (error) { message(error.message, 'error'); }
+});
+
 async function refreshJournals() {
-  const result = await api('/api/journals');
+  const result = await api('/api/journals', undefined, true);
+  renderProgress(result.progress);
   const journals = list(result.journals);
   const container = $('history-list');
+  container.querySelectorAll('button').forEach(button => { button.disabled = state.operationActive || Boolean(state.busy); });
+  const key = JSON.stringify(journals);
+  if (state.journalKey === key) return;
+  state.journalKey = key;
   container.replaceChildren();
   $('history-empty').hidden = Boolean(journals.length);
-  for (const journal of journals) {
+  for (const [index, journal] of journals.entries()) {
     const row = node('div', undefined, 'journal');
     const description = node('div');
     const date = journal.createdAt && new Date(journal.createdAt);
     const dateText = date && !Number.isNaN(date.valueOf()) ? date.toLocaleString('ru-RU') : journal.id;
     description.append(node('div', dateText, 'journal-title'));
     description.append(node('div', `${journalStatus[journal.status] || journal.status} · ${list(journal.entries).length} файлов · ${journal.id}`, 'journal-details'));
+    const moved = list(journal.entries).filter(entry => entry.status === 'moved').length;
+    const restored = list(journal.entries).filter(entry => entry.status === 'restored').length;
+    const pending = list(journal.entries).filter(entry => entry.status === 'pending' || entry.status === 'undo_pending').length;
+    description.append(node('div', `Переименовано: ${moved} · возвращено: ${restored}${pending ? ` · проверить результат: ${pending}` : ''}`, 'journal-details'));
+    description.append(node('p', `Папка назначения: ${journal.library}`, 'journal-details'));
     if (journal.error) description.append(node('p', journal.error, 'journal-error'));
     const files = node('details', undefined, 'journal-files');
+    files.open = index === 0;
     files.append(node('summary', 'Пути и результат операций'));
     list(journal.entries).forEach(entry => {
-      files.append(node('p', `${entry.source} → ${entry.destination} · ${entry.status || ''}${entry.error ? ` · ${entry.error}` : ''}`));
+      files.append(node('p', `${journalStatus[entry.status] || entry.status || ''}: ${entry.source} → ${entry.destination}${entry.error ? ` · ${entry.error}` : ''}`));
     });
     description.append(files);
     row.append(description);
     if (journal.status !== 'undone' && list(journal.entries).some(entry => entry.status !== 'restored' && entry.status !== 'planned')) {
       const undo = node('button', 'Отменить');
+      undo.disabled = state.operationActive || Boolean(state.busy);
       undo.type = 'button';
       undo.addEventListener('click', action(async () => {
         try {
-          await api('/api/undo', { journalId: journal.id });
+          message('Выполняется отмена. Для старого журнала может потребоваться проверка содержимого; прогресс показан выше.');
+          const pending = api('/api/undo', { journalId: journal.id });
+          pollJournals();
+          await pending;
           clearInventory();
           await refreshJournals();
           message('Операция отменена. Для нового предпросмотра выполните сканирование.', 'success');
@@ -551,7 +618,7 @@ $('open-settings').addEventListener('click', () => {
 $('settings-form').addEventListener('submit', action(async () => {
   const settings = {
     sourceRoot: $('settings-source').value.trim(), libraryRoot: $('settings-library').value.trim(),
-    language: $('settings-language').value, clearTmdbToken: $('clear-token').checked
+    language: $('settings-language').value, namingLanguage: $('settings-naming-language').value, clearTmdbToken: $('clear-token').checked
   };
   const token = $('settings-token').value.trim();
   if (token) settings.tmdbToken = token;
@@ -649,8 +716,11 @@ $('confirm-all').addEventListener('change', event => {
 
 $('apply-plan').addEventListener('click', action(async () => {
   if (!state.plan || !state.confirmed.size) return;
+  message(`Переименовываю ${state.confirmed.size} видеофайлов. Результат будет сохранён в журнале.`);
   try {
-    await api('/api/apply', { planId: state.plan.id, confirmed: Array.from(state.confirmed) });
+    const pending = api('/api/apply', { planId: state.plan.id, confirmed: Array.from(state.confirmed) });
+    pollJournals();
+    await pending;
     clearInventory();
     await refreshJournals();
     message('Выбранные операции применены. Журнал сохранён. Для следующих изменений выполните новое сканирование.', 'success');
@@ -658,6 +728,7 @@ $('apply-plan').addEventListener('click', action(async () => {
     if (error.result && error.result.journal) { clearInventory(); await refreshJournals(); }
     throw error;
   }
+  finally { await refreshJournals(); }
 }));
 
 $('refresh-history').addEventListener('click', action(async () => {

@@ -18,7 +18,7 @@ import (
 	"github.com/damuraiz/plex-helper/internal/server"
 )
 
-var version = "0.2.0"
+var version = "0.2.1"
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8650", "HTTP listen address")
@@ -81,6 +81,7 @@ func main() {
 	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
+		app.Engine.RequestStop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		if err := serverHTTP.Shutdown(shutdownCtx); err != nil {

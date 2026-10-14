@@ -13,12 +13,13 @@ import (
 )
 
 type event struct {
-	Version int      `json:"version,omitempty"`
-	Event   string   `json:"event"`
-	Journal *Journal `json:"journal,omitempty"`
-	Index   int      `json:"index,omitempty"`
-	Digest  string   `json:"sha256,omitempty"`
-	Error   string   `json:"error,omitempty"`
+	Version  int       `json:"version,omitempty"`
+	Event    string    `json:"event"`
+	Journal  *Journal  `json:"journal,omitempty"`
+	Index    int       `json:"index,omitempty"`
+	Digest   string    `json:"sha256,omitempty"`
+	Error    string    `json:"error,omitempty"`
+	Identity *Identity `json:"identity,omitempty"`
 }
 
 func appendEvent(f *os.File, record event) error {
@@ -75,8 +76,18 @@ func (e *Engine) Apply(plan Plan, confirmed []string) (Journal, error) {
 	j := Journal{ID: newID(), PlanID: plan.ID, Root: plan.Root, Library: plan.Library, CreatedAt: time.Now().UTC(), Status: "applying", Entries: []JournalEntry{}}
 	for index, entry := range filtered.Entries {
 		sourceStage, undoStage := stages(j.ID, index, entry)
-		j.Entries = append(j.Entries, JournalEntry{Entry: entry, SourceStage: sourceStage, UndoStage: undoStage, Status: "planned"})
+		fast, err := sameFilesystem(entry)
+		if err != nil {
+			return Journal{}, err
+		}
+		verification := ""
+		if fast {
+			verification = "stat"
+		}
+		j.Entries = append(j.Entries, JournalEntry{Entry: entry, SourceStage: sourceStage, UndoStage: undoStage, Status: "planned", Verification: verification})
 	}
+	e.beginProgress(j, "apply")
+	defer e.endProgress()
 	path, _ := e.journalPath(j.ID)
 	if err := checkPath(path); err != nil {
 		return j, err
@@ -86,7 +97,7 @@ func (e *Engine) Apply(plan Plan, confirmed []string) (Journal, error) {
 		return j, err
 	}
 	defer f.Close()
-	if err = appendEvent(f, event{Version: 1, Event: "header", Journal: &j}); err != nil {
+	if err = appendEvent(f, event{Version: 2, Event: "header", Journal: &j}); err != nil {
 		return j, err
 	}
 	if err = syncDir(e.dataDir); err != nil {
@@ -94,22 +105,39 @@ func (e *Engine) Apply(plan Plan, confirmed []string) (Journal, error) {
 	}
 	for index := range j.Entries {
 		entry := &j.Entries[index]
-		digest, err := hashFile(entry.Source, &entry.Identity)
-		if err != nil {
+		e.publish(j, index, "Переименование")
+		if err = e.fileProgress(entry.Source, 0, 0, "Переименование"); err != nil {
 			return failedJournal(f, j, index, err)
+		}
+		digest := ""
+		if entry.Verification != "stat" {
+			digest, err = hashFile(entry.Source, &entry.Identity, e.fileProgress)
+			if err != nil {
+				return failedJournal(f, j, index, err)
+			}
 		}
 		entry.Digest = digest
 		entry.Status = "pending"
 		if err = appendEvent(f, event{Event: "pending", Index: index, Digest: digest}); err != nil {
 			return j, err
 		}
-		if err = transfer(entry.Source, entry.Destination, entry.SourceStage, digest, &entry.Identity); err != nil {
+		if entry.Verification == "stat" {
+			actual, moveErr := fastMove(entry.Source, entry.Destination, entry.Identity)
+			err = moveErr
+			if err == nil {
+				entry.DestinationIdentity = &actual
+			}
+		} else {
+			err = transfer(entry.Source, entry.Destination, entry.SourceStage, digest, &entry.Identity, e.fileProgress)
+		}
+		if err != nil {
 			return failedJournal(f, j, index, err)
 		}
 		entry.Status = "moved"
-		if err = appendEvent(f, event{Event: "moved", Index: index}); err != nil {
+		if err = appendEvent(f, event{Event: "moved", Index: index, Identity: entry.DestinationIdentity}); err != nil {
 			return j, err
 		}
+		e.publish(j, index, "Переименовано")
 	}
 	j.Status = "complete"
 	if err = appendEvent(f, event{Event: "complete"}); err != nil {
@@ -118,6 +146,13 @@ func (e *Engine) Apply(plan Plan, confirmed []string) (Journal, error) {
 	return j, nil
 }
 func failedJournal(f *os.File, j Journal, index int, cause error) (Journal, error) {
+	if cause == ErrStopRequested {
+		j.Status = "stopped"
+		if err := appendEvent(f, event{Event: "stopped"}); err != nil {
+			return j, err
+		}
+		return j, cause
+	}
 	j.Status = "needs-attention"
 	j.Error = cause.Error()
 	j.Entries[index].Error = cause.Error()
@@ -166,7 +201,7 @@ func readJournal(path string) (Journal, int64, error) {
 			return j, offset, fmt.Errorf("corrupt journal: %w", err)
 		}
 		if !header {
-			if record.Event != "header" || record.Version != 1 || record.Journal == nil {
+			if record.Event != "header" || (record.Version != 1 && record.Version != 2) || record.Journal == nil {
 				return j, offset, fmt.Errorf("invalid journal header")
 			}
 			j = *record.Journal
@@ -183,13 +218,19 @@ func readJournal(path string) (Journal, int64, error) {
 				entry := &j.Entries[record.Index]
 				switch record.Event {
 				case "pending":
-					if len(record.Digest) != 64 {
+					if entry.Verification != "stat" && len(record.Digest) != 64 {
 						return j, offset, fmt.Errorf("invalid checksum")
 					}
 					entry.Digest = record.Digest
 					entry.Status = "pending"
 					j.Status = "interrupted"
 				case "moved":
+					if entry.Verification == "stat" {
+						if record.Identity == nil || record.Identity.ChangeTimeNS == 0 || !sameDataIdentity(*record.Identity, entry.Identity) {
+							return j, offset, fmt.Errorf("invalid moved fingerprint")
+						}
+						entry.DestinationIdentity = record.Identity
+					}
 					entry.Status = "moved"
 				case "failed":
 					entry.Error = record.Error
@@ -206,6 +247,8 @@ func readJournal(path string) (Journal, int64, error) {
 			case "undone":
 				j.Status = "undone"
 				j.Error = ""
+			case "stopped":
+				j.Status = "stopped"
 			default:
 				return j, offset, fmt.Errorf("unknown journal event")
 			}
@@ -226,6 +269,12 @@ func validateJournal(j Journal) error {
 	}
 	seen := map[string]bool{}
 	for index, entry := range j.Entries {
+		if entry.Verification != "" && entry.Verification != "stat" {
+			return fmt.Errorf("unknown verification method")
+		}
+		if entry.Verification == "stat" && entry.Identity.ChangeTimeNS == 0 {
+			return fmt.Errorf("fast entry has no change time")
+		}
 		if !filepath.IsAbs(entry.Source) || !filepath.IsAbs(entry.Destination) || filepath.Clean(entry.Source) != entry.Source || filepath.Clean(entry.Destination) != entry.Destination || !inside(entry.Source, j.Root) || !inside(entry.Destination, j.Library) {
 			return fmt.Errorf("journal paths escape roots")
 		}
@@ -318,8 +367,21 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 	if j.Status == "undone" {
 		return j, nil
 	}
+	j.Status = "undoing"
+	e.beginProgress(j, "undo")
+	defer e.endProgress()
 	// Verify the entire recovery set before changing any media.
-	for _, entry := range j.Entries {
+	for index, entry := range j.Entries {
+		e.publish(j, index, "Проверка перед отменой")
+		if err = e.fileProgress(entry.Destination, 0, 0, "Проверка перед отменой"); err != nil {
+			return j, err
+		}
+		if entry.Verification == "stat" {
+			if err = checkFastRestore(entry); err != nil {
+				return j, err
+			}
+			continue
+		}
 		if entry.Digest == "" || entry.Status == "planned" || entry.Status == "restored" {
 			continue
 		}
@@ -331,7 +393,7 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 			}
 			if present {
 				found = true
-				if err = verifyDigest(candidate, entry.Digest); err != nil {
+				if err = verifyDigest(candidate, entry.Digest, e.fileProgress); err != nil {
 					return j, err
 				}
 			}
@@ -351,14 +413,26 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 	j.Status = "undoing"
 	for index := len(j.Entries) - 1; index >= 0; index-- {
 		entry := &j.Entries[index]
-		if entry.Digest == "" || entry.Status == "planned" || entry.Status == "restored" {
+		if entry.Verification == "stat" && entry.DestinationIdentity == nil {
 			continue
+		}
+		if entry.Verification != "stat" && entry.Digest == "" || entry.Status == "planned" || entry.Status == "restored" {
+			continue
+		}
+		e.publish(j, index, "Возвращаю исходное имя")
+		if err = e.fileProgress(entry.Destination, 0, 0, "Возвращаю исходное имя"); err != nil {
+			return failedJournal(f, j, index, err)
 		}
 		if err = appendEvent(f, event{Event: "undo_pending", Index: index}); err != nil {
 			return j, err
 		}
 		entry.Status = "undo_pending"
-		if err = restoreOne(*entry); err != nil {
+		if entry.Verification == "stat" {
+			_, err = fastMove(entry.Destination, entry.Source, *entry.DestinationIdentity)
+		} else {
+			err = restoreOne(*entry, e.fileProgress)
+		}
+		if err != nil {
 			return failedJournal(f, j, index, err)
 		}
 		entry.Status = "restored"
@@ -366,6 +440,7 @@ func (e *Engine) Undo(journalID string) (Journal, error) {
 		if err = appendEvent(f, event{Event: "restored", Index: index}); err != nil {
 			return j, err
 		}
+		e.publish(j, index, "Возвращено")
 	}
 	j.Status = "undone"
 	j.Error = ""

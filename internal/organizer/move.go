@@ -51,7 +51,7 @@ func durableMkdir(path string, mode os.FileMode) error {
 	return syncDir(filepath.Dir(path))
 }
 
-func hashFile(path string, expected *Identity) (string, error) {
+func hashFile(path string, expected *Identity, callbacks ...fileProgress) (string, error) {
 	if err := checkPath(path); err != nil {
 		return "", err
 	}
@@ -72,7 +72,14 @@ func hashFile(path string, expected *Identity) (string, error) {
 		return "", fmt.Errorf("source changed: %s", path)
 	}
 	h := sha256.New()
-	if _, err = io.Copy(h, f); err != nil {
+	if err = notify(callbacks, path, 0, id.Size, "Проверка содержимого SHA256"); err != nil {
+		return "", err
+	}
+	writer := &progressWriter{writer: h, callbacks: callbacks, path: path, total: id.Size, phase: "Проверка содержимого SHA256"}
+	if _, err = io.Copy(writer, f); err != nil {
+		return "", err
+	}
+	if err = notify(callbacks, path, id.Size, id.Size, "Синхронизация файла"); err != nil {
 		return "", err
 	}
 	after, err := f.Stat()
@@ -100,11 +107,11 @@ func hashFile(path string, expected *Identity) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
-func verifyDigest(path, digest string) error {
+func verifyDigest(path, digest string, callbacks ...fileProgress) error {
 	if len(digest) != 64 {
 		return fmt.Errorf("missing recovery checksum")
 	}
-	actual, err := hashFile(path, nil)
+	actual, err := hashFile(path, nil, callbacks...)
 	if err != nil {
 		return err
 	}
@@ -124,7 +131,7 @@ func exists(path string) (bool, error) {
 // transfer preserves either the original or a durable verified destination at
 // every step. A journal records holding before transfer starts. Replacement of
 // the original pathname is captured in holding, never silently unlinked.
-func transfer(source, destination, holding, digest string, expected *Identity) error {
+func transfer(source, destination, holding, digest string, expected *Identity, callbacks ...fileProgress) error {
 	for _, path := range []string{source, destination, holding} {
 		if err := checkPath(path); err != nil {
 			return err
@@ -133,7 +140,7 @@ func transfer(source, destination, holding, digest string, expected *Identity) e
 	if err := checkAliases(destination); err != nil {
 		return err
 	}
-	if err := verifyDigest(source, digest); err != nil {
+	if err := verifyDigest(source, digest, callbacks...); err != nil {
 		return err
 	}
 	if expected != nil {
@@ -166,18 +173,18 @@ func transfer(source, destination, holding, digest string, expected *Identity) e
 			if checkErr != nil {
 				return checkErr
 			}
-			if current != *expected {
+			if !sameDataIdentity(current, *expected) {
 				return fmt.Errorf("source replaced during atomic move; preserved at %s", destination)
 			}
 		}
-		return verifyDigest(destination, digest)
+		return verifyDigest(destination, digest, callbacks...)
 	}
 	if !errors.Is(err, syscall.EXDEV) {
 		return err
 	}
-	return copyAcross(source, destination, holding, digest, expected)
+	return copyAcross(source, destination, holding, digest, expected, callbacks...)
 }
-func copyAcross(source, destination, holding, digest string, expected *Identity) error {
+func copyAcross(source, destination, holding, digest string, expected *Identity, callbacks ...fileProgress) error {
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -201,7 +208,11 @@ func copyAcross(source, destination, holding, digest string, expected *Identity)
 	temporary := tmp.Name()
 	defer func() { tmp.Close(); os.Remove(temporary) }()
 	h := sha256.New()
-	if _, err = io.Copy(io.MultiWriter(tmp, h), input); err != nil {
+	if err = notify(callbacks, source, 0, id.Size, "Копирование между томами"); err != nil {
+		return err
+	}
+	writer := &progressWriter{writer: io.MultiWriter(tmp, h), callbacks: callbacks, path: source, total: id.Size, phase: "Копирование между томами"}
+	if _, err = io.Copy(writer, input); err != nil {
 		return err
 	}
 	if hex.EncodeToString(h.Sum(nil)) != digest {
@@ -216,7 +227,7 @@ func copyAcross(source, destination, holding, digest string, expected *Identity)
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	if err = verifyDigest(temporary, digest); err != nil {
+	if err = verifyDigest(temporary, digest, callbacks...); err != nil {
 		return err
 	}
 	if err = checkPath(destination); err != nil {
@@ -243,10 +254,10 @@ func copyAcross(source, destination, holding, digest string, expected *Identity)
 	if err != nil {
 		return err
 	}
-	if current != id {
+	if !sameDataIdentity(current, id) {
 		return fmt.Errorf("source replaced during copy; preserved at %s", holding)
 	}
-	if err = verifyDigest(holding, digest); err != nil {
+	if err = verifyDigest(holding, digest, callbacks...); err != nil {
 		return err
 	}
 	if err = os.Remove(holding); err != nil {
@@ -257,7 +268,7 @@ func copyAcross(source, destination, holding, digest string, expected *Identity)
 
 // restoreOne reconciles every recorded crash window. Existing originals are
 // kept; verified duplicate destinations are removed only after a source exists.
-func restoreOne(entry JournalEntry) error {
+func restoreOne(entry JournalEntry, callbacks ...fileProgress) error {
 	for _, path := range []string{entry.Source, entry.Destination, entry.SourceStage, entry.UndoStage} {
 		if path != "" {
 			if err := checkPath(path); err != nil {
@@ -288,22 +299,22 @@ func restoreOne(entry JournalEntry) error {
 		}
 	}
 	if source {
-		if err = verifyDigest(entry.Source, entry.Digest); err != nil {
+		if err = verifyDigest(entry.Source, entry.Digest, callbacks...); err != nil {
 			return err
 		}
 	}
 	if dest {
-		if err = verifyDigest(entry.Destination, entry.Digest); err != nil {
+		if err = verifyDigest(entry.Destination, entry.Digest, callbacks...); err != nil {
 			return err
 		}
 	}
 	if holding {
-		if err = verifyDigest(entry.SourceStage, entry.Digest); err != nil {
+		if err = verifyDigest(entry.SourceStage, entry.Digest, callbacks...); err != nil {
 			return err
 		}
 	}
 	if undoHolding {
-		if err = verifyDigest(entry.UndoStage, entry.Digest); err != nil {
+		if err = verifyDigest(entry.UndoStage, entry.Digest, callbacks...); err != nil {
 			return err
 		}
 	}
@@ -322,7 +333,7 @@ func restoreOne(entry JournalEntry) error {
 			source = true
 			holding = false
 		case dest:
-			if err = transfer(entry.Destination, entry.Source, entry.UndoStage, entry.Digest, nil); err != nil {
+			if err = transfer(entry.Destination, entry.Source, entry.UndoStage, entry.Digest, nil, callbacks...); err != nil {
 				return err
 			}
 			source = true
@@ -336,7 +347,7 @@ func restoreOne(entry JournalEntry) error {
 			if err = syncDir(filepath.Dir(entry.Destination)); err != nil {
 				return err
 			}
-			if err = transfer(entry.Destination, entry.Source, entry.UndoStage, entry.Digest, nil); err != nil {
+			if err = transfer(entry.Destination, entry.Source, entry.UndoStage, entry.Digest, nil, callbacks...); err != nil {
 				return err
 			}
 			source = true
@@ -357,7 +368,7 @@ func restoreOne(entry JournalEntry) error {
 			if !present {
 				continue
 			}
-			if err = verifyDigest(path, entry.Digest); err != nil {
+			if err = verifyDigest(path, entry.Digest, callbacks...); err != nil {
 				return err
 			}
 			if path == entry.Destination {
@@ -370,7 +381,7 @@ func restoreOne(entry JournalEntry) error {
 					return err
 				}
 				path = entry.UndoStage
-				if err = verifyDigest(path, entry.Digest); err != nil {
+				if err = verifyDigest(path, entry.Digest, callbacks...); err != nil {
 					return err
 				}
 			}

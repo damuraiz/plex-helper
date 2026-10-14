@@ -40,11 +40,12 @@ type tmdbItem struct {
 
 type TMDB struct {
 	Token, Language, BaseURL string
+	NamingLanguage           string
 	Client                   *http.Client
 }
 
 func newTMDB(c Config) *TMDB {
-	return &TMDB{Token: c.TMDBToken, Language: c.Language, BaseURL: "https://api.themoviedb.org/3/", Client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &TMDB{Token: c.TMDBToken, Language: c.Language, NamingLanguage: c.NamingLanguage, BaseURL: "https://api.themoviedb.org/3/", Client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return errors.New("TMDB redirects are not permitted")
 	}}}
 }
@@ -152,6 +153,19 @@ func (t *TMDB) Metadata(ctx context.Context, kind, id string, seasons []int) (me
 	}
 	title, year := itemFields(item, kind)
 	result = media.Metadata{Kind: kind, Title: title, Year: year, Provider: "tmdb", ID: id}
+	naming := *t
+	if t.NamingLanguage != "" {
+		naming.Language = t.NamingLanguage
+	}
+	if naming.Language != t.Language {
+		var nameItem tmdbItem
+		if err := naming.get(ctx, kind+"/"+id, nil, &nameItem); err != nil {
+			return result, err
+		}
+		result.NamingTitle, _ = itemFields(nameItem, kind)
+	} else {
+		result.NamingTitle = title
+	}
 	if kind == "tv" && len(seasons) > 0 {
 		if len(seasons) > 50 {
 			return result, errors.New("too many seasons in one request")
@@ -171,7 +185,7 @@ func (t *TMDB) Metadata(ctx context.Context, kind, id string, seasons []int) (me
 					Name   string `json:"name"`
 				} `json:"episodes"`
 			}
-			if err := t.get(ctx, "tv/"+id+"/season/"+key, nil, &payload); err != nil {
+			if err := naming.get(ctx, "tv/"+id+"/season/"+key, nil, &payload); err != nil {
 				return result, err
 			}
 			result.Seasons[key] = make(map[string]string)

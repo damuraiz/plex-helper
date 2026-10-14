@@ -38,8 +38,9 @@
         <form id="settings-form">
           <div class="form-grid">
             <label>Папка с исходными файлами<div class="input-action"><input id="settings-source" placeholder="/volume1/downloads" required><button data-browse="settings-source" type="button">Обзор</button></div></label>
-            <label>Папка медиатеки Plex<div class="input-action"><input id="settings-library" placeholder="/volume1/video" required><button data-browse="settings-library" type="button">Обзор</button></div></label>
+            <label>Папка назначения<div class="input-action"><input id="settings-library" placeholder="/volume1/video или /volume1/video/TV Shows" required><button data-browse="settings-library" type="button">Обзор</button></div></label>
             <label>Язык метаданных<select id="settings-language"><option value="ru-RU">Русский</option><option value="en-US">English</option></select></label>
+            <label>Язык имён папок и файлов<select id="settings-naming-language"><option value="en-US">English</option><option value="ru-RU">Русский</option></select></label>
             <label>TMDB Read Access Token или API key<input id="settings-token" type="password" autocomplete="off" placeholder="Вставьте собственный токен или API key"></label>
           </div>
           <div class="settings-footer"><div><p id="token-status" class="muted"></p><label class="inline-label"><input id="clear-token" type="checkbox">Удалить сохранённый токен</label></div><button class="primary" type="submit">Сохранить настройки</button></div>
@@ -48,6 +49,13 @@
       </details>
 
       <div id="global-status" class="status global-status" role="status" aria-live="polite"></div>
+      <section id="operation-panel" class="panel operation-panel" hidden aria-label="Выполняющаяся операция">
+        <div class="section-heading"><h2 id="operation-heading">Выполняется операция</h2><button id="stop-operation" type="button">Остановить обработку</button></div>
+        <p id="operation-summary" class="preview-help" role="status"></p>
+        <p id="operation-path" class="file-path preview-help"></p>
+        <progress id="operation-progress" max="100" value="0" aria-label="Прогресс обработки файла"></progress>
+        <p class="help preview-help">Обновление страницы не прерывает обработку. «Остановить обработку» сохранит выполненные операции в журнале; отмена выполняется отдельно.</p>
+      </section>
       <section class="panel scan-panel" aria-labelledby="scan-heading">
         <div class="section-heading"><h2 id="scan-heading"><span class="step-number">1</span>Выберите папку</h2><span id="scan-summary" class="muted">Начните с папки для подготовки</span></div>
         <form id="scan-form" class="scan-form">
@@ -82,6 +90,7 @@
             <form id="manual-form">
               <div class="divider-label">ПРОВЕРЬТЕ ИЛИ ИСПРАВЬТЕ</div>
               <label>Название<input id="edit-title" required></label>
+              <label>Название в именах папок и файлов<input id="edit-naming-title" required></label>
               <div class="form-grid compact"><label>Тип<select id="edit-kind"><option value="movie">Фильм</option><option value="tv">Сериал</option></select></label><label>Год<input id="edit-year" type="number" min="1800" max="2200"></label></div>
               <div id="episode-fields"><div class="form-grid compact"><label>Сезон<input id="edit-season" type="number" min="0" max="999"></label><label>Эпизоды<input id="edit-episodes" placeholder="1 или 1,2"></label></div><label>Дата эфира<input id="edit-airdate" type="date"></label></div>
               <div class="form-grid compact"><label>Провайдер<select id="edit-provider"><option value="">Без ID</option><option value="tmdb">TMDB</option><option value="tvdb">TVDB</option><option value="imdb">IMDb</option></select></label><label>ID<input id="edit-id" autocomplete="off" placeholder="Например, 550"></label></div>

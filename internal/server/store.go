@@ -15,12 +15,13 @@ import (
 )
 
 type Config struct {
-	SourceRoot   string `json:"sourceRoot"`
-	LibraryRoot  string `json:"libraryRoot"`
-	Language     string `json:"language"`
-	TMDBToken    string `json:"tmdbToken,omitempty"`
-	PasswordSalt string `json:"passwordSalt,omitempty"`
-	PasswordHash string `json:"passwordHash,omitempty"`
+	SourceRoot     string `json:"sourceRoot"`
+	LibraryRoot    string `json:"libraryRoot"`
+	Language       string `json:"language"`
+	NamingLanguage string `json:"namingLanguage"`
+	TMDBToken      string `json:"tmdbToken,omitempty"`
+	PasswordSalt   string `json:"passwordSalt,omitempty"`
+	PasswordHash   string `json:"passwordHash,omitempty"`
 }
 
 type Store struct {
@@ -68,6 +69,9 @@ func openStore(dir string, localAuth bool) (*Store, error) {
 	}
 	if s.config.Language == "" {
 		s.config.Language = "ru-RU"
+	}
+	if s.config.NamingLanguage == "" {
+		s.config.NamingLanguage = "en-US"
 	}
 	if !localAuth && os.IsNotExist(err) {
 		data, e := json.MarshalIndent(s.config, "", "  ")
@@ -185,13 +189,16 @@ func (s *Store) CheckSetupToken(token string) bool {
 	return s.setupToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.setupToken)) == 1
 }
 
-func (s *Store) SaveSettings(source, library, language string, token *string) error {
+func (s *Store) SaveSettings(source, library, language string, token *string, namingLanguage ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	updated := s.config
 	updated.SourceRoot = source
 	updated.LibraryRoot = library
 	updated.Language = language
+	if len(namingLanguage) > 0 && namingLanguage[0] != "" {
+		updated.NamingLanguage = namingLanguage[0]
+	}
 	if token != nil {
 		updated.TMDBToken = *token
 	}

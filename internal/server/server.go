@@ -229,7 +229,7 @@ func (a *App) Handler() http.Handler {
 				if err != nil {
 					failure(w, 500, err)
 				} else {
-					reply(w, 200, map[string]any{"journals": journals})
+					reply(w, 200, map[string]any{"journals": journals, "progress": a.Engine.Progress()})
 				}
 			default:
 				failure(w, 404, errors.New("not found"))
@@ -253,7 +253,7 @@ func (a *App) state(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		result["user"] = s.User
 		result["csrf"] = s.CSRF
-		result["settings"] = map[string]any{"sourceRoot": c.SourceRoot, "libraryRoot": c.LibraryRoot, "language": c.Language, "tmdbConfigured": c.TMDBToken != ""}
+		result["settings"] = map[string]any{"sourceRoot": c.SourceRoot, "libraryRoot": c.LibraryRoot, "language": c.Language, "namingLanguage": c.NamingLanguage, "tmdbConfigured": c.TMDBToken != ""}
 	}
 	reply(w, 200, result)
 }
@@ -345,9 +345,16 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: "plex_helper_session", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		reply(w, 200, map[string]bool{"ok": true})
+	case "/api/stop":
+		if !a.Engine.RequestStop() {
+			failure(w, 409, errors.New("нет выполняющейся операции"))
+			return
+		}
+		reply(w, 200, map[string]bool{"ok": true})
 	case "/api/settings":
 		var input struct {
 			SourceRoot, LibraryRoot, Language string
+			NamingLanguage                    string  `json:"namingLanguage"`
 			TMDBToken                         *string `json:"tmdbToken"`
 			ClearTMDBToken                    bool    `json:"clearTmdbToken"`
 		}
@@ -357,6 +364,10 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 		}
 		if !languagePattern.MatchString(input.Language) {
 			failure(w, 400, errors.New("language must be ru-RU or en-US, etc."))
+			return
+		}
+		if input.NamingLanguage != "" && !languagePattern.MatchString(input.NamingLanguage) {
+			failure(w, 400, errors.New("invalid naming language"))
 			return
 		}
 		for _, path := range []string{input.SourceRoot, input.LibraryRoot} {
@@ -378,7 +389,7 @@ func (a *App) post(w http.ResponseWriter, r *http.Request) {
 			failure(w, 400, errors.New("invalid token"))
 			return
 		}
-		if err := a.Store.SaveSettings(input.SourceRoot, input.LibraryRoot, input.Language, input.TMDBToken); err != nil {
+		if err := a.Store.SaveSettings(input.SourceRoot, input.LibraryRoot, input.Language, input.TMDBToken, input.NamingLanguage); err != nil {
 			failure(w, 500, err)
 			return
 		}

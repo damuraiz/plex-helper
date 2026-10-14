@@ -20,6 +20,7 @@ type ParseResult struct {
 type Metadata struct {
 	Kind          string                       `json:"kind"`
 	Title         string                       `json:"title"`
+	NamingTitle   string                       `json:"naming_title,omitempty"`
 	Year          int                          `json:"year,omitempty"`
 	Provider      string                       `json:"provider,omitempty"`
 	ID            string                       `json:"id,omitempty"`

@@ -140,6 +140,7 @@ func TestPrepareSeriesThenGroupCorrectionApplyUndo(t *testing.T) {
 	// Fix one episode's coordinates and propagate only the series identity.
 	identity := result.Selections[inv.Items[0].ID]
 	identity.Title = "Другое название"
+	identity.NamingTitle = "Другое название"
 	identity.ID = "777"
 	w = call(t, h, "POST", "/api/match", map[string]any{"inventoryId": inv.InventoryID, "itemId": inv.Items[0].ID, "scope": "group", "metadata": identity, "selections": result.Selections}, cookie, csrf)
 	if err = json.Unmarshal(w.Body.Bytes(), &result); w.Code != 200 || err != nil || len(result.Selections) != 5 {

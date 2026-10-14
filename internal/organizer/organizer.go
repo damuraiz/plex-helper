@@ -21,10 +21,11 @@ import (
 )
 
 type Identity struct {
-	Device    uint64 `json:"device"`
-	Inode     uint64 `json:"inode"`
-	Size      int64  `json:"size"`
-	ModTimeNS int64  `json:"modTimeNs"`
+	Device       uint64 `json:"device"`
+	Inode        uint64 `json:"inode"`
+	Size         int64  `json:"size"`
+	ModTimeNS    int64  `json:"modTimeNs"`
+	ChangeTimeNS int64  `json:"changeTimeNs,omitempty"`
 }
 type Item struct {
 	ID       string            `json:"id"`
@@ -58,11 +59,13 @@ type Plan struct {
 }
 type JournalEntry struct {
 	Entry
-	Digest      string `json:"sha256,omitempty"`
-	SourceStage string `json:"sourceStage,omitempty"`
-	UndoStage   string `json:"undoStage,omitempty"`
-	Status      string `json:"status"`
-	Error       string `json:"error,omitempty"`
+	Digest              string    `json:"sha256,omitempty"`
+	SourceStage         string    `json:"sourceStage,omitempty"`
+	UndoStage           string    `json:"undoStage,omitempty"`
+	Status              string    `json:"status"`
+	Error               string    `json:"error,omitempty"`
+	Verification        string    `json:"verification,omitempty"`
+	DestinationIdentity *Identity `json:"destinationIdentity,omitempty"`
 }
 type Journal struct {
 	ID        string         `json:"id"`
@@ -75,8 +78,12 @@ type Journal struct {
 	Error     string         `json:"error,omitempty"`
 }
 type Engine struct {
-	dataDir string
-	mu      sync.Mutex
+	dataDir       string
+	mu            sync.Mutex
+	progressMu    sync.Mutex
+	liveJournal   *Journal
+	progress      Progress
+	stopRequested bool
 }
 
 func New(dataDir string) (*Engine, error) {
@@ -141,7 +148,7 @@ func identityInfo(info os.FileInfo) (Identity, error) {
 	if !ok {
 		return Identity{}, fmt.Errorf("unsupported filesystem identity")
 	}
-	return Identity{Device: uint64(stat.Dev), Inode: uint64(stat.Ino), Size: info.Size(), ModTimeNS: info.ModTime().UnixNano()}, nil
+	return Identity{Device: uint64(stat.Dev), Inode: uint64(stat.Ino), Size: info.Size(), ModTimeNS: info.ModTime().UnixNano(), ChangeTimeNS: changeTime(stat)}, nil
 }
 func snapshot(path string) (Identity, error) {
 	if err := checkPath(path); err != nil {
@@ -298,6 +305,13 @@ func (e *Engine) Plan(inv Inventory, library string, selections map[string]media
 			plan.Issues = append(plan.Issues, Issue{source, err.Error()})
 			continue
 		}
+		// Accept a general media root or the conventional Plex type folder.
+		// Selecting TV Shows itself must not create TV Shows/TV Shows.
+		for _, folder := range []string{"TV Shows", "Movies"} {
+			if strings.EqualFold(filepath.Base(library), folder) {
+				rel = strings.TrimPrefix(rel, folder+"/")
+			}
+		}
 		if filepath.IsAbs(rel) || !inside(filepath.Join(library, rel), library) || filepath.Clean(rel) != rel {
 			return plan, fmt.Errorf("unsafe naming result")
 		}
@@ -429,15 +443,23 @@ func validatePlan(plan Plan) error {
 }
 
 func (e *Engine) Journals() ([]Journal, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	// Do not wait for the media-operation mutex. Active journal reads come
+	// from a small snapshot, so a torn concurrent append is never exposed.
+	e.progressMu.Lock()
+	defer e.progressMu.Unlock()
 	names, err := os.ReadDir(e.dataDir)
 	if err != nil {
 		return nil, err
 	}
 	result := []Journal{}
+	if e.liveJournal != nil {
+		result = append(result, cloneJournal(*e.liveJournal))
+	}
 	for _, name := range names {
 		if !strings.HasSuffix(name.Name(), ".jsonl") {
+			continue
+		}
+		if e.liveJournal != nil && name.Name() == e.liveJournal.ID+".jsonl" {
 			continue
 		}
 		j, _, err := readJournal(filepath.Join(e.dataDir, name.Name()))

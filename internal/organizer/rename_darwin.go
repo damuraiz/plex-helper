@@ -25,3 +25,4 @@ func renameExclusive(source, destination string) error {
 	return nil
 }
 func directorySyncUnsupported(err error) error { return nil }
+func changeTime(stat *syscall.Stat_t) int64    { return stat.Ctimespec.Sec*1e9 + stat.Ctimespec.Nsec }

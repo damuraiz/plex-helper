@@ -27,3 +27,4 @@ func renameExclusive(source, destination string) error {
 func directorySyncUnsupported(err error) error {
 	return fmt.Errorf("filesystem does not support durable directory sync: %w", err)
 }
+func changeTime(stat *syscall.Stat_t) int64 { return stat.Ctim.Sec*1e9 + stat.Ctim.Nsec }

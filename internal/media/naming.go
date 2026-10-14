@@ -57,7 +57,11 @@ func RelativePath(parsed ParseResult, meta Metadata) (string, error) {
 	if kind != "movie" && kind != "tv" {
 		return "", fmt.Errorf("a resolved movie or tv kind is required")
 	}
-	title, err := safeComponent(meta.Title, "title")
+	name := meta.Title
+	if meta.NamingTitle != "" {
+		name = meta.NamingTitle
+	}
+	title, err := safeComponent(name, "title")
 	if err != nil {
 		return "", err
 	}
